@@ -1,0 +1,13 @@
+[package]
+name = "bevy-floppy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+bevy = { version = "0.16.0", "features" = ["wayland"] }
+rand_core = "0.9"
+bevy_rand = "0.11"
+bevy_prng = { version = "0.11", features = ["rand_chacha", "wyrand"] }
+dotenvy = "0.15.7"
+bevy_egui = "0.34.1"
