@@ -4,9 +4,7 @@
 //!
 use bevy::prelude::*;
 
-use crate::AppState;
-
-const MARGIN: Val = Val::Px(12.);
+use crate::{AppState, util::entities::despawn_all};
 
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
@@ -27,15 +25,9 @@ enum MenuButtonAction {
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Menu), spawn)
-            .add_systems(OnExit(AppState::Menu), despawn_all)
+        app.add_systems(OnEnter(AppState::Menu), setup)
+            .add_systems(OnExit(AppState::Menu), despawn_all::<MainMenuComponent>)
             .add_systems(Update, on_button_pressed.run_if(in_state(AppState::Menu)));
-    }
-}
-
-fn despawn_all(mut commands: Commands, to_despawn: Query<Entity, With<MainMenuComponent>>) {
-    for entity in &to_despawn {
-        commands.entity(entity).despawn();
     }
 }
 
@@ -68,7 +60,7 @@ fn on_button_pressed(
     }
 }
 
-fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let right_icon = asset_server.load("textures/Game Icons/right.png");
     let exit_icon = asset_server.load("textures/Game Icons/exitRight.png");
     commands.spawn((

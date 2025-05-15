@@ -1,126 +1,421 @@
 // Based on:
 // https://github.com/bevyengine/bevy/blob/main/examples/2d/sprite_animation.rs
 
-use std::{f32, ops::Add, time::Duration};
+use std::{
+    any::{Any, TypeId},
+    f32::{self, consts::PI},
+    ops::Add,
+    time::Duration,
+};
 
-use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use bevy::{
+    input::common_conditions::{input_just_pressed, input_just_released},
+    prelude::*,
+    state::commands,
+};
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
+use bevy_rapier2d::{
+    plugin::{NoUserData, RapierPhysicsPlugin},
+    prelude::*,
+    rapier::prelude::RigidBodyVelocity,
+    render::RapierDebugRenderPlugin,
+};
 use rand_core::RngCore;
 
-use crate::AppState;
+use crate::{
+    APP_CONFIG, AppState,
+    dev_gui::DevGuiEvent,
+    util::{entities::despawn_all, reflect::try_apply_parsed},
+};
 
-const VELOCITY: f32 = 500.0;
-const PIPE_SPAWN_INTERVAL_MILLIS_MIN: u64 = 2000;
-const PIPE_SPAWN_INTERVAL_MILLIS_MAX: u64 = 2500;
-const VERTICAL_SPACE_BETWEEN_PIPES_MIN: f32 = 150.0;
-const VERTICAL_SPACE_BETWEEN_PIPES_MAX: f32 = 300.0;
+const PIPE_SPAWN_DESPAWN_X: f32 = 1000.0;
 
-pub struct GamePlugin;
+const PIPE_UP_TEXTURE_PATH: &str = "textures/pipe_up.png";
+const PIPE_DOWN_TEXTURE_PATH: &str = "textures/pipe_down.png";
+const FLOPPY_TEXTURE_PATH: &str = "textures/floppy.png";
 
-#[derive(Component)]
-struct RngSource;
+const BACKGROUND_COLOR: Srgba = Srgba {
+    red: 0.,
+    green: 0.4,
+    blue: 0.3,
+    alpha: 0.3,
+};
 
-#[derive(Resource)]
-struct NextPipeSpawn(Duration);
-
-impl NextPipeSpawn {
-    fn random(mut rng: GlobalEntropy<WyRand>, time: Time) -> Self {
-        let rand = rng.next_u64();
-        let now = time.elapsed();
-        let add_millis = ((rand as f32) / (u64::MAX as f32)
-            * (PIPE_SPAWN_INTERVAL_MILLIS_MAX - PIPE_SPAWN_INTERVAL_MILLIS_MIN) as f32)
-            as u64
-            + PIPE_SPAWN_INTERVAL_MILLIS_MIN;
-        Self(now.add(Duration::from_millis(add_millis)))
-    }
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
+pub enum GameState {
+    BeforeGame,
+    Running,
+    FloppyDead,
 }
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        let elapsed = app
-            .world()
-            .get_resource::<Time>()
-            .expect("Time resource not found!")
-            .elapsed();
-        app.add_systems(OnEnter(AppState::Game), setup)
-            .insert_resource(NextPipeSpawn(elapsed))
+        app.add_plugins((RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),))
+            .register_type::<GameVariables>()
+            .insert_resource(GameVariables::default())
+            .add_systems(OnEnter(AppState::Game), (setup, start_game))
+            .add_systems(
+                OnEnter(GameState::Running),
+                (
+                    despawn_all::<DeathScreenGui>,
+                    despawn_all::<Pipe>,
+                    spawn_floppy,
+                ),
+            )
+            .add_systems(
+                OnEnter(GameState::FloppyDead),
+                (despawn_all::<Floppy>, show_death_screen),
+            )
             .add_systems(
                 Update,
                 (
-                    spawn_pipes
-                        .run_if(should_spawn_pipes)
+                    (
+                        spawn_pipes.run_if(should_spawn_pipes),
+                        update_pipes,
+                        update_floppy,
+                        update_camera_transform
+                            .run_if(|variables: Res<GameVariables>| variables.camera_follow_floppy),
+                        handle_jump.run_if(input_just_pressed(KeyCode::ArrowUp)),
+                        handle_move.run_if(horizontal_arrow_key_changed),
+                        despawn_all::<Pipe>.run_if(input_just_pressed(KeyCode::KeyD)),
+                        kill_floppy
+                            .run_if(is_floppy_out_of_bounds.or(input_just_pressed(KeyCode::KeyR))),
+                        handle_collision_events,
+                    )
+                        .run_if(in_state(GameState::Running)),
+                    (start_game.run_if(input_just_pressed(KeyCode::KeyR)))
+                        .run_if(in_state(GameState::FloppyDead)),
+                )
+                    .run_if(in_state(AppState::Game)),
+            )
+            .insert_state(GameState::BeforeGame);
+
+        if APP_CONFIG.dev_gui {
+            app.add_event::<GameVariablesEvent>()
+                .add_systems(OnEnter(AppState::Game), setup_debug_gui)
+                .add_systems(
+                    Update,
+                    (handle_debug_gui_events, handle_game_variables_changed)
                         .run_if(in_state(AppState::Game)),
-                    transform_pipes.run_if(in_state(AppState::Game)),
-                ),
-            );
+                );
+        }
+
+        if APP_CONFIG.rapier_debug_render {
+            app.add_plugins(RapierDebugRenderPlugin::default());
+        }
     }
 }
 
-fn should_spawn_pipes(time: Res<Time>, next_spawn: Res<NextPipeSpawn>) -> bool {
-    time.elapsed() >= next_spawn.0
+fn start_game(mut game_state: ResMut<NextState<GameState>>) {
+    debug!("Game started");
+    game_state.set(GameState::Running)
+}
+
+fn kill_floppy(mut game_state: ResMut<NextState<GameState>>) {
+    debug!("Floppy died");
+    game_state.set(GameState::FloppyDead)
+}
+
+fn is_floppy_out_of_bounds(
+    variables: Res<GameVariables>,
+    q_floppy: Query<&Transform, With<Floppy>>,
+) -> bool {
+    let GameVariables {
+        floppy_alive_zone_x,
+        floppy_alive_zone_y,
+        ..
+    } = *variables;
+    for transform in q_floppy {
+        let Vec3 { x, y, .. } = transform.translation;
+        if x < -floppy_alive_zone_x
+            || x > floppy_alive_zone_x
+            || y < -floppy_alive_zone_y
+            || y > floppy_alive_zone_y
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn handle_collision_events(
+    q_floppy: Query<(), With<Floppy>>,
+    q_pipe: Query<(), With<Pipe>>,
+    mut collision_events: EventReader<CollisionEvent>,
+    mut game_state: ResMut<NextState<GameState>>,
+) {
+    for collision_event in collision_events.read() {
+        if let CollisionEvent::Started(entity, entity1, ..) = collision_event {
+            let floppy_and_pipe_collided = q_floppy.get(*entity).is_ok()
+                && q_pipe.get(*entity1).is_ok()
+                || q_floppy.get(*entity1).is_ok() && q_pipe.get(*entity).is_ok();
+            if floppy_and_pipe_collided {
+                game_state.set(GameState::FloppyDead);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Event)]
+enum GameVariablesEvent {
+    Initialized {
+        new: GameVariables,
+    },
+    Changed {
+        old: GameVariables,
+        new: GameVariables,
+    },
+}
+
+fn handle_game_variables_changed(
+    mut events: EventReader<GameVariablesEvent>,
+    mut q_camera_follow_state: Query<&mut FollowStateComponent, With<Camera>>,
+) {
+    for event in events.read() {
+        let (old, new) = match event {
+            GameVariablesEvent::Initialized { new } => (None, new),
+            GameVariablesEvent::Changed { old, new } => (Some(old), new),
+        };
+
+        let old_is_none = old.is_none();
+        if old_is_none || old.unwrap().camera_follow_floppy != new.camera_follow_floppy {
+            for mut camera in &mut q_camera_follow_state {
+                *camera = if new.camera_follow_floppy {
+                    FollowStateComponent::WantsToFollowFloppy
+                } else {
+                    FollowStateComponent::Centered
+                };
+            }
+        }
+    }
+}
+
+fn horizontal_arrow_key_changed(key_codes: Res<ButtonInput<KeyCode>>) -> bool {
+    let keys = [KeyCode::ArrowLeft, KeyCode::ArrowRight];
+    key_codes.get_just_pressed().any(|k| keys.contains(k))
+        || key_codes.get_just_released().any(|k| keys.contains(k))
+}
+
+fn handle_move(
+    key_codes: Res<ButtonInput<KeyCode>>,
+    ext_forces: Query<&mut ExternalForce, With<Floppy>>,
+    variables: Res<GameVariables>,
+) {
+    let GameVariables {
+        floppy_horizontal_force,
+        ..
+    } = *variables;
+    let mut force = 0.;
+    for key_code in key_codes.get_pressed() {
+        match key_code {
+            KeyCode::ArrowLeft => force -= floppy_horizontal_force,
+            KeyCode::ArrowRight => force += floppy_horizontal_force,
+            _ => {}
+        }
+    }
+    for mut ext_forces in ext_forces {
+        ext_forces.force = Vec2::new(force, 0.);
+    }
+}
+
+#[derive(Clone, Debug, Component)]
+struct DeathScreenGui;
+
+fn show_death_screen(mut commands: Commands) {
+    commands.spawn((
+        DeathScreenGui,
+        Node {
+            align_self: AlignSelf::Center,
+            justify_self: JustifySelf::Center,
+            ..default()
+        },
+        Text("Floppy died!".to_owned()),
+    ));
+}
+
+fn update_floppy(
+    q_floppy: Query<(&mut ExternalForce, &Transform, &Velocity), With<Floppy>>,
+    variables: Res<GameVariables>,
+) {
+    let GameVariables {
+        floppy_torque_spring_strength,
+        floppy_rotation_friction,
+        ..
+    } = *variables;
+    for (mut force, transform, velocity) in q_floppy {
+        let Velocity { angvel, .. } = velocity;
+        let quat = transform.rotation;
+        let (Vec3 { z, .. }, angle) = quat.to_axis_angle();
+        force.torque =
+            -angvel * floppy_rotation_friction + -z * angle * floppy_torque_spring_strength;
+    }
+}
+fn update_camera_transform(
+    q_entity: Query<&Transform, Without<FollowStateComponent>>,
+    q_camera: Query<(&mut Transform, &FollowStateComponent), With<Camera2d>>,
+) {
+    for (mut cam_transform, follow) in q_camera {
+        let FollowStateComponent::Follow(entity) = follow else {
+            continue;
+        };
+
+        let Ok(e) = q_entity.get(*entity) else {
+            continue;
+        };
+        *cam_transform = *e;
+    }
+}
+
+fn handle_jump(
+    ext_impulses: Query<&mut ExternalImpulse, With<Floppy>>,
+    variables: Res<GameVariables>,
+) {
+    let GameVariables {
+        floppy_jump_torque_impulse,
+        floppy_jump_vertical_impulse,
+        ..
+    } = *variables;
+    for mut ext_impulse in ext_impulses {
+        *ext_impulse = ExternalImpulse {
+            impulse: Vec2::new(0., floppy_jump_vertical_impulse),
+            torque_impulse: floppy_jump_torque_impulse,
+        };
+    }
+}
+
+fn spawn_floppy(
+    mut commands: Commands,
+    game_resources: Res<GameResources>,
+    variables: Res<GameVariables>,
+) {
+    let GameVariables {
+        floppy_spawn_x,
+        floppy_spawn_y,
+        floppy_radius,
+        floppy_mass,
+        ..
+    } = *variables;
+    let GameResources { floppy, .. } = &*game_resources;
+    debug!("Game started");
+    debug!("Spawning Floppy at ({floppy_spawn_x}, {floppy_spawn_y})");
+    debug!("Entity: ");
+
+    /* Create the bouncing ball. */
+    commands.spawn((
+        Floppy,
+        Sprite {
+            image: floppy.clone(),
+            custom_size: Some(Vec2::new(floppy_radius * 2., floppy_radius * 2.)),
+            image_mode: SpriteImageMode::Scale(ScalingMode::FillCenter),
+            ..Default::default()
+        },
+        RigidBody::Dynamic,
+        Collider::ball(floppy_radius),
+        Sensor,
+        ColliderMassProperties::Mass(floppy_mass),
+        // AdditionalMassProperties::Mass(floppy_mass),
+        Transform::from_xyz(floppy_spawn_x, floppy_spawn_y, 0.0),
+        Velocity::default(),
+        ExternalForce::default(),
+        ExternalImpulse::default(),
+        ActiveCollisionTypes::DYNAMIC_KINEMATIC,
+        ActiveEvents::COLLISION_EVENTS,
+    ));
+}
+
+fn should_spawn_pipes(time: Res<Time>, next_spawn: Option<Res<PipeSpawnTimer>>) -> bool {
+    let Some(PipeSpawnTimer(next_spawn)) = next_spawn.as_deref() else {
+        return false;
+    };
+    time.elapsed() >= *next_spawn
 }
 
 fn spawn_pipes(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut rng: GlobalEntropy<WyRand>,
-    mut next_pipe_spawn: ResMut<NextPipeSpawn>,
+    mut next_pipe_spawn: ResMut<PipeSpawnTimer>,
     time: Res<Time>,
+    game_resources: Res<GameResources>,
+    variables: Res<GameVariables>,
 ) {
-    // let texture = asset_server.load("textures/rpg/chars/gabe/gabe-idle-run.png");
-    let texture = asset_server.load("textures/floppy/pipe.png");
-    let height_rng = rng.next_u32();
+    let GameResources {
+        pipe_up_texture,
+        pipe_down_texture,
+        ..
+    } = &*game_resources;
+
+    let GameVariables {
+        vertical_space_between_pipes_min_px,
+        vertical_space_between_pipes_max_px,
+        pipe_height_px,
+        pipe_width_px,
+        pipe_spawn_height_modifier_px,
+        pipe_max_deviation,
+        ..
+    } = *variables;
+    let spawn_height_rng = rng.next_u32();
     let space_rng = rng.next_u32();
 
     let space = (space_rng as f32) / (u32::MAX as f32)
-        * (VERTICAL_SPACE_BETWEEN_PIPES_MAX - VERTICAL_SPACE_BETWEEN_PIPES_MIN)
-        + VERTICAL_SPACE_BETWEEN_PIPES_MIN;
+        * (vertical_space_between_pipes_max_px - vertical_space_between_pipes_min_px)
+        + vertical_space_between_pipes_min_px;
 
-    let height = (height_rng as f32 / (u32::MAX as f32)) * 300.0 - 500.0;
+    let spawn_height =
+        ((spawn_height_rng as f32 / (u32::MAX as f32)) - 0.5) * 2. * pipe_max_deviation
+            + pipe_spawn_height_modifier_px
+            + (pipe_height_px + space) / 2.0;
 
-    let x = 1000.0;
-    let spawns = [(height, false), (space + height + 500.0, true)];
-    for (y, rotate) in spawns {
+    let x = PIPE_SPAWN_DESPAWN_X;
+    let spawns = [
+        (spawn_height, pipe_down_texture),
+        (spawn_height - pipe_height_px - space, pipe_up_texture),
+    ];
+    let scale = pipe_height_px / 3000.;
+    for (y, texture) in spawns {
         debug!("Spawning Pipe at ({x}, {y})");
-        let mut transform =
-            Transform::from_scale(Vec3::splat(0.8)).with_translation(Vec3::new(x, y, 0.0));
-
-        if rotate {
-            transform.rotate_local_z(f32::consts::PI);
-        }
         commands.spawn((
+            Pipe,
             Sprite {
                 image: texture.clone(),
                 ..Default::default()
             },
-            transform,
-            Pipe,
+            RigidBody::KinematicVelocityBased,
+            Transform::from_scale(Vec3::splat(scale)).with_translation(Vec3::new(x, y, 0.0)),
+            Collider::cuboid(pipe_width_px / 2.0, pipe_height_px / 2.0),
+            Sensor,
+            ActiveCollisionTypes::DYNAMIC_KINEMATIC,
         ));
     }
-    *next_pipe_spawn = NextPipeSpawn::random(rng, *time)
+    *next_pipe_spawn = PipeSpawnTimer::random(&mut rng, &time, &variables)
 }
 
-fn transform_pipes(
+fn update_pipes(
     mut commands: Commands,
     time: Res<Time>,
-    query: Query<(Entity, &mut Transform), With<Pipe>>,
+    query: Query<(Entity, &mut Transform, &mut Collider), With<Pipe>>,
+    variables: Res<GameVariables>,
 ) {
-    let delta = VELOCITY * (time.delta().as_millis() as f32 / 1000.0);
-    for (entity, mut transform) in query {
+    let GameVariables {
+        velocity_px_per_secs,
+        ..
+    } = *variables;
+    let delta = velocity_px_per_secs * (time.delta().as_millis() as f32 / 1000.0);
+    for (entity, mut transform, mut collider) in query {
         transform.translation.x -= delta;
-        if transform.translation.x < -1000.0 {
+        // Hack: Shouldn't need to set the shape after setup.
+        collider.as_cuboid_mut().unwrap().set_half_extents(Vec2 {
+            x: variables.pipe_width_px / 2.,
+            y: variables.pipe_height_px / 2.,
+        });
+        if transform.translation.x < -PIPE_SPAWN_DESPAWN_X {
             commands.entity(entity).despawn();
+            debug!(
+                "Despawned Pipe at ({}, {})",
+                transform.translation.x, transform.translation.y
+            );
         }
     }
-}
-
-#[derive(Component)]
-struct AnimationConfig {
-    first_sprite_index: usize,
-    last_sprite_index: usize,
-    fps: u8,
-    frame_timer: Timer,
 }
 
 #[derive(Component)]
@@ -130,7 +425,160 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     time: Res<Time>,
-    mut rng: GlobalEntropy<WyRand>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    variables: Res<GameVariables>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut events: EventWriter<GameVariablesEvent>,
 ) {
-    commands.insert_resource(NextPipeSpawn::random(rng, *time));
+    let GameVariables {
+        floppy_alive_zone_x,
+        floppy_alive_zone_y,
+        ..
+    } = *variables;
+    let pipe_up_texture = asset_server.load::<Image>(PIPE_UP_TEXTURE_PATH);
+    let pipe_down_texture = asset_server.load::<Image>(PIPE_DOWN_TEXTURE_PATH);
+    let floppy = asset_server.load::<Image>(FLOPPY_TEXTURE_PATH);
+    commands.insert_resource(GameResources {
+        floppy,
+        pipe_up_texture,
+        pipe_down_texture,
+    });
+    commands.insert_resource(PipeSpawnTimer(time.elapsed()));
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle {
+            half_size: Vec2::new(floppy_alive_zone_x, floppy_alive_zone_y),
+        })),
+        MeshMaterial2d(materials.add(Color::Srgba(BACKGROUND_COLOR))),
+        Transform::from_xyz(0., 0., -1.),
+    ));
+    events.write(GameVariablesEvent::Initialized {
+        new: variables.clone(),
+    });
+}
+
+fn setup_debug_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiEvent>) {
+    let vars = variables
+        .iter_fields()
+        .enumerate()
+        .map(|(i, v)| {
+            (
+                variables.name_at(i).unwrap().to_owned(),
+                format!("{v:?}").trim_matches('\"').to_owned(),
+            )
+        })
+        .collect();
+    writer.write(DevGuiEvent::AddVariables { vars });
+}
+
+fn handle_debug_gui_events(
+    mut reader: EventReader<DevGuiEvent>,
+    mut variables: ResMut<GameVariables>,
+    mut events: EventWriter<GameVariablesEvent>,
+) {
+    for event in reader.read() {
+        if let DevGuiEvent::VariableUpdated { key, value } = event {
+            debug!("Updated {key} -> {value}");
+            let old = variables.clone();
+            let field = variables
+                .reflect_mut()
+                .as_struct()
+                .unwrap()
+                .field_mut(key)
+                .unwrap();
+            try_apply_parsed(field, value)
+                .inspect_err(|err| error!("{err}"))
+                .ok();
+            events.write(GameVariablesEvent::Changed {
+                old,
+                new: variables.clone(),
+            });
+        }
+    }
+}
+
+#[derive(Clone, Debug, Resource, Reflect)]
+struct GameVariables {
+    velocity_px_per_secs: f32,
+    pipe_spawn_interval_min_millis: f32,
+    pipe_spawn_interval_max_millis: f32,
+    vertical_space_between_pipes_min_px: f32,
+    vertical_space_between_pipes_max_px: f32,
+    pipe_max_deviation: f32,
+    pipe_height_px: f32,
+    pipe_width_px: f32,
+    pipe_spawn_height_modifier_px: f32,
+    floppy_jump_vertical_impulse: f32,
+    floppy_jump_torque_impulse: f32,
+    floppy_torque_spring_strength: f32,
+    floppy_rotation_friction: f32,
+    floppy_spawn_x: f32,
+    floppy_spawn_y: f32,
+    floppy_radius: f32,
+    floppy_mass: f32,
+    floppy_horizontal_force: f32,
+    floppy_alive_zone_x: f32,
+    floppy_alive_zone_y: f32,
+    camera_follow_floppy: bool,
+}
+
+impl Default for GameVariables {
+    fn default() -> Self {
+        Self {
+            velocity_px_per_secs: 200.0,
+            pipe_spawn_interval_min_millis: 2000.0,
+            pipe_spawn_interval_max_millis: 3000.0,
+            vertical_space_between_pipes_min_px: 150.0,
+            vertical_space_between_pipes_max_px: 300.0,
+            pipe_max_deviation: 150.0,
+            pipe_height_px: 700.0,
+            pipe_width_px: 50.0,
+            pipe_spawn_height_modifier_px: 0.,
+            floppy_jump_vertical_impulse: 1200.,
+            floppy_jump_torque_impulse: 7000.,
+            floppy_torque_spring_strength: 50000.,
+            floppy_rotation_friction: 4000.,
+            floppy_spawn_x: -300.,
+            floppy_spawn_y: 400.,
+            floppy_radius: 20.,
+            floppy_mass: 2.,
+            floppy_horizontal_force: 1000.,
+            floppy_alive_zone_x: 700.,
+            floppy_alive_zone_y: 400.,
+            camera_follow_floppy: false,
+        }
+    }
+}
+
+pub struct GamePlugin;
+
+#[derive(Clone, Debug, Component)]
+struct Floppy;
+
+#[derive(Clone, Debug, Resource)]
+struct PipeSpawnTimer(Duration);
+
+#[derive(Resource)]
+pub struct GameResources {
+    floppy: Handle<Image>,
+    pipe_up_texture: Handle<Image>,
+    pipe_down_texture: Handle<Image>,
+}
+
+impl PipeSpawnTimer {
+    fn random(rng: &mut GlobalEntropy<WyRand>, time: &Time, variables: &GameVariables) -> Self {
+        let rand = rng.next_u64();
+        let now = time.elapsed();
+        let add_millis = ((rand as f32) / (u64::MAX as f32)
+            * (variables.pipe_spawn_interval_max_millis - variables.pipe_spawn_interval_min_millis))
+            as u64
+            + variables.pipe_spawn_interval_min_millis as u64;
+        Self(now.add(Duration::from_millis(add_millis)))
+    }
+}
+
+#[derive(Clone, Debug, Copy, Component)]
+enum FollowStateComponent {
+    Follow(Entity),
+    WantsToFollowFloppy,
+    Centered,
 }
