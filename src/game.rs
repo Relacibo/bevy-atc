@@ -11,6 +11,7 @@ use std::{
 use bevy::{
     input::common_conditions::{input_just_pressed, input_just_released},
     prelude::*,
+    render::camera,
     state::commands,
 };
 use bevy_prng::WyRand;
@@ -61,6 +62,7 @@ impl Plugin for GamePlugin {
                     despawn_all::<DeathScreenGui>,
                     despawn_all::<Pipe>,
                     spawn_floppy,
+                    reset_camera.after(spawn_floppy),
                 ),
             )
             .add_systems(
@@ -74,11 +76,12 @@ impl Plugin for GamePlugin {
                         spawn_pipes.run_if(should_spawn_pipes),
                         update_pipes,
                         update_floppy,
-                        update_camera_transform
-                            .run_if(|variables: Res<GameVariables>| variables.camera_follow_floppy),
+                        update_camera_transform,
                         handle_jump.run_if(input_just_pressed(KeyCode::ArrowUp)),
                         handle_move.run_if(horizontal_arrow_key_changed),
                         despawn_all::<Pipe>.run_if(input_just_pressed(KeyCode::KeyD)),
+                        (toggle_cam_mode, reset_camera.after(toggle_cam_mode))
+                            .run_if(input_just_pressed(KeyCode::KeyC)),
                         kill_floppy
                             .run_if(is_floppy_out_of_bounds.or(input_just_pressed(KeyCode::KeyR))),
                         handle_collision_events,
@@ -103,6 +106,15 @@ impl Plugin for GamePlugin {
 
         if APP_CONFIG.rapier_debug_render {
             app.add_plugins(RapierDebugRenderPlugin::default());
+        }
+    }
+}
+
+fn toggle_cam_mode(q_camera: Query<&mut FollowStateComponent, With<Camera2d>>) {
+    for mut follow in q_camera {
+        *follow = match *follow {
+            FollowStateComponent::Centered => FollowStateComponent::WantsToFollowFloppy,
+            _ => FollowStateComponent::Centered,
         }
     }
 }
@@ -251,6 +263,28 @@ fn update_floppy(
             -angvel * floppy_rotation_friction + -z * angle * floppy_torque_spring_strength;
     }
 }
+
+fn reset_camera(
+    q_floppy: Query<Entity, With<Floppy>>,
+    mut q_camera: Query<(&mut Transform, &mut FollowStateComponent), With<Camera2d>>,
+) {
+    let Some(floppy) = q_floppy.iter().next() else {
+        error!("Wanted to follow floppy, but didn't find him");
+        return;
+    };
+    for (mut transform, mut follow) in &mut q_camera {
+        match *follow {
+            FollowStateComponent::WantsToFollowFloppy => {
+                *follow = FollowStateComponent::Follow(floppy)
+            }
+            FollowStateComponent::Centered => {
+                *transform = Transform::default();
+            }
+            FollowStateComponent::Follow(_) => {}
+        }
+    }
+}
+
 fn update_camera_transform(
     q_entity: Query<&Transform, Without<FollowStateComponent>>,
     q_camera: Query<(&mut Transform, &FollowStateComponent), With<Camera2d>>,
@@ -421,6 +455,7 @@ fn update_pipes(
 #[derive(Component)]
 struct Pipe;
 
+#[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -429,6 +464,7 @@ fn setup(
     variables: Res<GameVariables>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut events: EventWriter<GameVariablesEvent>,
+    q_camera: Query<Entity, With<Camera2d>>,
 ) {
     let GameVariables {
         floppy_alive_zone_x,
@@ -451,6 +487,11 @@ fn setup(
         MeshMaterial2d(materials.add(Color::Srgba(BACKGROUND_COLOR))),
         Transform::from_xyz(0., 0., -1.),
     ));
+    for camera in q_camera {
+        commands
+            .entity(camera)
+            .insert(FollowStateComponent::Centered);
+    }
     events.write(GameVariablesEvent::Initialized {
         new: variables.clone(),
     });
