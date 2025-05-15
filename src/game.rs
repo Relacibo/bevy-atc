@@ -54,6 +54,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),))
             .register_type::<GameVariables>()
+            .add_event::<GameVariablesEvent>()
             .insert_resource(GameVariables::default())
             .add_systems(OnEnter(AppState::Game), (setup, start_game))
             .add_systems(
@@ -85,6 +86,7 @@ impl Plugin for GamePlugin {
                         kill_floppy
                             .run_if(is_floppy_out_of_bounds.or(input_just_pressed(KeyCode::KeyR))),
                         handle_collision_events,
+                        handle_game_variables_event,
                     )
                         .run_if(in_state(GameState::Running)),
                     (start_game.run_if(input_just_pressed(KeyCode::KeyR)))
@@ -95,12 +97,10 @@ impl Plugin for GamePlugin {
             .insert_state(GameState::BeforeGame);
 
         if APP_CONFIG.dev_gui {
-            app.add_event::<GameVariablesEvent>()
-                .add_systems(OnEnter(AppState::Game), setup_debug_gui)
+            app.add_systems(OnEnter(AppState::Game), setup_debug_gui)
                 .add_systems(
                     Update,
-                    (handle_debug_gui_events, handle_game_variables_changed)
-                        .run_if(in_state(AppState::Game)),
+                    (handle_debug_gui_events).run_if(in_state(AppState::Game)),
                 );
         }
 
@@ -180,7 +180,7 @@ enum GameVariablesEvent {
     },
 }
 
-fn handle_game_variables_changed(
+fn handle_game_variables_event(
     mut events: EventReader<GameVariablesEvent>,
     mut q_camera_follow_state: Query<&mut FollowStateComponent, With<Camera>>,
 ) {
@@ -265,6 +265,7 @@ fn update_floppy(
 }
 
 fn reset_camera(
+    commands: Commands,
     q_floppy: Query<Entity, With<Floppy>>,
     mut q_camera: Query<(&mut Transform, &mut FollowStateComponent), With<Camera2d>>,
 ) {
@@ -274,13 +275,10 @@ fn reset_camera(
     };
     for (mut transform, mut follow) in &mut q_camera {
         match *follow {
-            FollowStateComponent::WantsToFollowFloppy => {
-                *follow = FollowStateComponent::Follow(floppy)
-            }
             FollowStateComponent::Centered => {
                 *transform = Transform::default();
             }
-            FollowStateComponent::Follow(_) => {}
+            _ => *follow = FollowStateComponent::Follow(floppy),
         }
     }
 }
