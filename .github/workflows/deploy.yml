@@ -3,17 +3,11 @@ name: Build and Deploy
 on:
   push:
     branches: [main]
-permissions:
-  contents: write
-  pages: write
-  id-token: write
 jobs:
-  build-and-deploy:
+  # Build job
+  build:
+    # Specify runner +  build & upload the static files as an artifact
     runs-on: ubuntu-latest
-    environment: 
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    concurrency: ci-${{ github.ref }} # Recommended if you intend to make multiple deployments in quick succession.
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v4
@@ -27,14 +21,24 @@ jobs:
       - name: Build
         env: 
           RUSTFLAGS: --cfg getrandom_backend="wasm_js"
-        run: |
-          cargo build --release --target wasm32-unknown-unknown
-          wasm-bindgen --no-typescript --target web \
-            --out-dir ./dist/ \
-            --out-name "bevy-floppy" \
-            ./target/wasm32-unknown-unknown/release/bevy-floppy.wasm
+        run: ./bash-scripts/build-release-wasm.sh
 
+      - name: Upload static files as artifact
+        id: deployment
+        uses: actions/upload-pages-artifact@v3 # or specific "vX.X.X" version tag for this action
+        with:
+          path: dist/
 
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment: 
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
