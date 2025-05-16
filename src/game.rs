@@ -406,17 +406,18 @@ fn spawn_pipes(
         (spawn_height, pipe_down_texture),
         (spawn_height - pipe_height_px - space, pipe_up_texture),
     ];
-    let scale = pipe_height_px / 3000.;
     for (y, texture) in spawns {
         debug!("Spawning Pipe at ({x}, {y})");
         commands.spawn((
             Pipe,
             Sprite {
                 image: texture.clone(),
+                custom_size: Some(Vec2::new(pipe_width_px, pipe_height_px)),
+                image_mode: SpriteImageMode::Scale(ScalingMode::FillCenter),
                 ..Default::default()
             },
             RigidBody::KinematicVelocityBased,
-            Transform::from_scale(Vec3::splat(scale)).with_translation(Vec3::new(x, y, 0.0)),
+            Transform::from_xyz(x, y, 0.0),
             Collider::cuboid(pipe_width_px / 2.0, pipe_height_px / 2.0),
             Sensor,
             ActiveCollisionTypes::DYNAMIC_KINEMATIC,
@@ -428,7 +429,7 @@ fn spawn_pipes(
 fn update_pipes(
     mut commands: Commands,
     time: Res<Time>,
-    query: Query<(Entity, &mut Transform, &mut Collider), With<Pipe>>,
+    query: Query<(Entity, &mut Transform), With<Pipe>>,
     variables: Res<GameVariables>,
 ) {
     let GameVariables {
@@ -438,13 +439,8 @@ fn update_pipes(
     let delta = pipe_velocity_meter_per_secs
         * PIXELS_PER_METER
         * (time.delta().as_millis() as f32 / 1000.0);
-    for (entity, mut transform, mut collider) in query {
+    for (entity, mut transform) in query {
         transform.translation.x -= delta;
-        // Hack: Shouldn't need to set the shape after setup.
-        collider.as_cuboid_mut().unwrap().set_half_extents(Vec2 {
-            x: variables.pipe_width_px / 2.,
-            y: variables.pipe_height_px / 2.,
-        });
         if transform.translation.x < -PIPE_SPAWN_DESPAWN_X {
             commands.entity(entity).despawn();
             debug!(
