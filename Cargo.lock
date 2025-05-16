@@ -197,16 +197,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1df21f715862ede32a0c525ce2ca4d52626bb0007f8c18b87a384503ac33e70"
 dependencies = [
  "clipboard-win",
- "image",
  "log",
  "objc2 0.6.1",
  "objc2-app-kit 0.3.1",
- "objc2-core-foundation",
- "objc2-core-graphics",
  "objc2-foundation 0.3.1",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
  "x11rb",
 ]
 
@@ -375,6 +371,7 @@ dependencies = [
  "bevy_simple_scroll_view",
  "bevy_ui_text_input",
  "dotenvy",
+ "getrandom 0.3.3",
  "rand_core 0.9.3",
 ]
 
@@ -1388,9 +1385,8 @@ dependencies = [
 
 [[package]]
 name = "bevy_ui_text_input"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48299df365ab1d5cef3836fb1cbe7ebb3f04cddc2e32fdc40331a845d7bdc012"
+version = "0.4.0"
+source = "git+https://github.com/ickshonpe/bevy_ui_text_input.git?branch=master#4820696bb044137da912460ece7335b9d510d6e4"
 dependencies = [
  "arboard",
  "bevy",
@@ -1398,6 +1394,9 @@ dependencies = [
  "once_cell",
  "regex",
  "sys-locale",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2375,9 +2374,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasi 0.14.2+wasi-0.2.4",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2648,7 +2649,6 @@ dependencies = [
  "byteorder-lite",
  "num-traits",
  "png",
- "tiff",
 ]
 
 [[package]]
@@ -2762,12 +2762,6 @@ dependencies = [
  "getrandom 0.3.3",
  "libc",
 ]
-
-[[package]]
-name = "jpeg-decoder"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5d4a7da358eff58addd2877a45865158f0d78c911d43a5784ceb7bbf52833b0"
 
 [[package]]
 name = "js-sys"
@@ -4605,17 +4599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiff"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba1310fcea54c6a9a4fd1aad794ecc02c31682f6bfbecdf460bf19533eed1e3e"
-dependencies = [
- "flate2",
- "jpeg-decoder",
- "weezl",
-]
-
-[[package]]
 name = "tiny-skia"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5119,12 +5102,6 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "weezl"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
 
 [[package]]
 name = "wgpu"

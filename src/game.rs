@@ -578,7 +578,7 @@ impl Default for GameVariables {
             pipe_width_px: 50.0,
             pipe_spawn_height_modifier_px: 0.,
             floppy_jump_vertical_impulse: 1200.,
-            floppy_jump_torque_impulse: 7000.,
+            floppy_jump_torque_impulse: 8000.,
             floppy_torque_spring_strength: 50000.,
             floppy_rotation_friction: 4000.,
             floppy_spawn_x: -300.,

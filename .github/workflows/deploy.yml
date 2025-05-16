@@ -1,0 +1,41 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: 
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency: ci-${{ github.ref }} # Recommended if you intend to make multiple deployments in quick succession.
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup wasm bindgen cli
+        uses: jetli/wasm-bindgen-action@v0.2.0
+        with:
+          # Optional version of wasm-bindgen to install(eg. '0.2.83', 'latest')
+          version: 'latest'
+
+      - name: Build
+        env: 
+          RUSTFLAGS: --cfg getrandom_backend="wasm_js"
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          wasm-bindgen --no-typescript --target web \
+            --out-dir ./dist/ \
+            --out-name "bevy-floppy" \
+            ./target/wasm32-unknown-unknown/release/bevy-floppy.wasm
+
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
