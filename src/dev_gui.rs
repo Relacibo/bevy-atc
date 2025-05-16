@@ -68,20 +68,17 @@ impl DevGuiVisibilityState {
 
 impl Plugin for DevGuiPlugin {
     fn build(&self, app: &mut bevy::app::App) {
-        app.insert_state(DevGuiVisibilityState::Visible)
+        app.insert_state(DevGuiVisibilityState::Hidden)
             .add_event::<DevGuiEvent>()
             .add_systems(Startup, setup)
             .add_systems(
                 Update,
-                (handle_ui_events, handle_events).run_if(in_state(DevGuiVisibilityState::Visible)),
-            )
-            .add_systems(
-                Update,
-                handle_toggle_visibility.run_if(input_just_pressed(KeyCode::KeyL)),
-            )
-            .add_systems(
-                Update,
-                handle_visibility_state_changed.run_if(state_changed::<DevGuiVisibilityState>),
+                (
+                    handle_toggle_visibility.run_if(input_just_pressed(KeyCode::KeyL)),
+                    handle_visibility_state_changed.run_if(state_changed::<DevGuiVisibilityState>),
+                    handle_events,
+                    handle_ui_events.run_if(in_state(DevGuiVisibilityState::Visible)),
+                ),
             );
     }
 }
@@ -108,27 +105,35 @@ fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilitySta
     commands.spawn((
         DevGuiRootComponent,
         Node {
-            height: Val::Px(400.0),
-            width: Val::Px(600.0),
-            flex_direction: FlexDirection::Row,
-            overflow: Overflow::clip(),
-            align_items: AlignItems::Start,
-            align_self: AlignSelf::Stretch,
+            height: Val::Percent(100.),
+            width: Val::Percent(100.),
             ..default()
         },
-        ScrollView {
-            scroll_speed: 2000.0,
-        },
         visibility_state.to_visibility(),
-        BackgroundColor(Srgba::new(0., 0., 0., 0.3).into()),
         children![(
-            DevGuiScrollComponent,
             Node {
-                flex_direction: FlexDirection::Column,
+                height: Val::Px(300.0),
+                width: Val::Px(600.0),
+                flex_direction: FlexDirection::Row,
+                overflow: Overflow::clip(),
+                align_items: AlignItems::Start,
                 ..default()
             },
-            ScrollableContent::default()
-        )],
+            ScrollView {
+                scroll_speed: 2000.0,
+            },
+            Visibility::Inherited,
+            BackgroundColor(Srgba::new(0., 0., 0., 0.3).into()),
+            children![(
+                DevGuiScrollComponent,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                Visibility::Inherited,
+                ScrollableContent::default()
+            )]
+        ),],
     ));
 }
 

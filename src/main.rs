@@ -32,7 +32,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     fn from_env() -> Self {
-        let dev_gui = env::var("DEV_GUI").as_deref() == Ok("1");
+        let dev_gui = env::var("DEV_GUI").as_deref() != Ok("0");
         let rapier_debug_render = env::var("RAPIER_DEBUG_RENDER").as_deref() == Ok("1");
         Self {
             dev_gui,
