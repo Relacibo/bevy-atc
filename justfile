@@ -2,4 +2,7 @@ dev-wasm:
     RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo run --target wasm32-unknown-unknown -- 
 
 build-release-wasm:
-  ./bash-scripts/build-release-wasm.sh
+    ./bash-scripts/build-release-wasm.sh
+
+serve-release-wasm:
+    npx http-server dist/
