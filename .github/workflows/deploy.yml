@@ -12,6 +12,11 @@ jobs:
       - name: Checkout 🛎️
         uses: actions/checkout@v4
 
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
       - name: Setup wasm bindgen cli
         uses: jetli/wasm-bindgen-action@v0.2.0
         with:
