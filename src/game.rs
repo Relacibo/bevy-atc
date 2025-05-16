@@ -32,6 +32,8 @@ use crate::{
 
 const PIPE_SPAWN_DESPAWN_X: f32 = 1000.0;
 
+const PIXELS_PER_METER: f32 = 100.0;
+
 const PIPE_UP_TEXTURE_PATH: &str = "textures/pipe_up.png";
 const PIPE_DOWN_TEXTURE_PATH: &str = "textures/pipe_down.png";
 const FLOPPY_TEXTURE_PATH: &str = "textures/floppy.png";
@@ -52,7 +54,9 @@ pub enum GameState {
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),))
+        app.add_plugins((RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
+            PIXELS_PER_METER,
+        ),))
             .register_type::<GameVariables>()
             .add_event::<GameVariablesEvent>()
             .insert_resource(GameVariables::default())
@@ -265,7 +269,6 @@ fn update_floppy(
 }
 
 fn reset_camera(
-    commands: Commands,
     q_floppy: Query<Entity, With<Floppy>>,
     mut q_camera: Query<(&mut Transform, &mut FollowStateComponent), With<Camera2d>>,
 ) {
@@ -429,10 +432,12 @@ fn update_pipes(
     variables: Res<GameVariables>,
 ) {
     let GameVariables {
-        velocity_px_per_secs,
+        pipe_velocity_meter_per_secs,
         ..
     } = *variables;
-    let delta = velocity_px_per_secs * (time.delta().as_millis() as f32 / 1000.0);
+    let delta = pipe_velocity_meter_per_secs
+        * PIXELS_PER_METER
+        * (time.delta().as_millis() as f32 / 1000.0);
     for (entity, mut transform, mut collider) in query {
         transform.translation.x -= delta;
         // Hack: Shouldn't need to set the shape after setup.
@@ -537,9 +542,9 @@ fn handle_debug_gui_events(
 
 #[derive(Clone, Debug, Resource, Reflect)]
 struct GameVariables {
-    velocity_px_per_secs: f32,
-    pipe_spawn_interval_min_millis: f32,
-    pipe_spawn_interval_max_millis: f32,
+    pipe_velocity_meter_per_secs: f32,
+    pipe_spawn_distance_min_meters: f32,
+    pipe_spawn_distance_max_meters: f32,
     vertical_space_between_pipes_min_px: f32,
     vertical_space_between_pipes_max_px: f32,
     pipe_max_deviation: f32,
@@ -563,9 +568,9 @@ struct GameVariables {
 impl Default for GameVariables {
     fn default() -> Self {
         Self {
-            velocity_px_per_secs: 200.0,
-            pipe_spawn_interval_min_millis: 2000.0,
-            pipe_spawn_interval_max_millis: 3000.0,
+            pipe_velocity_meter_per_secs: 2.0,
+            pipe_spawn_distance_min_meters: 3.0,
+            pipe_spawn_distance_max_meters: 4.0,
             vertical_space_between_pipes_min_px: 150.0,
             vertical_space_between_pipes_max_px: 300.0,
             pipe_max_deviation: 150.0,
@@ -605,13 +610,20 @@ pub struct GameResources {
 
 impl PipeSpawnTimer {
     fn random(rng: &mut GlobalEntropy<WyRand>, time: &Time, variables: &GameVariables) -> Self {
+        let GameVariables {
+            pipe_spawn_distance_min_meters,
+            pipe_spawn_distance_max_meters,
+            pipe_velocity_meter_per_secs,
+            ..
+        } = variables;
         let rand = rng.next_u64();
         let now = time.elapsed();
-        let add_millis = ((rand as f32) / (u64::MAX as f32)
-            * (variables.pipe_spawn_interval_max_millis - variables.pipe_spawn_interval_min_millis))
-            as u64
-            + variables.pipe_spawn_interval_min_millis as u64;
-        Self(now.add(Duration::from_millis(add_millis)))
+        let meters = ((rand as f32) / (u64::MAX as f32)
+            * (*pipe_spawn_distance_max_meters - *pipe_spawn_distance_min_meters))
+            + *pipe_spawn_distance_min_meters;
+        Self(now.add(Duration::from_millis(
+            (meters * 1000. / pipe_velocity_meter_per_secs) as u64,
+        )))
     }
 }
 
