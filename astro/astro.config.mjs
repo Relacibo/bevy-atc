@@ -5,6 +5,8 @@ import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 // https://astro.build/config
 export default defineConfig({
+  site: process.env.SITE,
+  base: process.env.BASE,
   vite: {
     plugins: [
       viteStaticCopy({

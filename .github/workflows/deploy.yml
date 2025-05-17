@@ -2,7 +2,7 @@ name: Build and Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [$default-branch]
   workflow_dispatch:
 jobs:
   # Build job
@@ -26,9 +26,16 @@ jobs:
 
       - name: Build
         run: ./bash-scripts/build-release-wasm.sh
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
       
       - name: Install, build, and upload your site output
         uses: withastro/action@v4
+        env:
+          SITE: ${{ steps.pages.outputs.origin }}
+          BASE: ${{ steps.pages.outputs.base_path }}
         with: 
           path: ./astro
 
