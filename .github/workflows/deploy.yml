@@ -3,6 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 jobs:
   # Build job
   build:
@@ -19,20 +20,17 @@ jobs:
 
       - name: Setup wasm bindgen cli
         uses: jetli/wasm-bindgen-action@v0.2.0
-        with:
-          # Optional version of wasm-bindgen to install(eg. '0.2.83', 'latest')
-          version: 'latest'
+
+      - name: Cache rust
+        uses: Swatinem/rust-cache@v2
 
       - name: Build
-        env: 
-          RUSTFLAGS: --cfg getrandom_backend="wasm_js"
         run: ./bash-scripts/build-release-wasm.sh
-
-      - name: Upload static files as artifact
-        id: deployment
-        uses: actions/upload-pages-artifact@v3 # or specific "vX.X.X" version tag for this action
-        with:
-          path: dist/
+      
+      - name: Install, build, and upload your site output
+        uses: withastro/action@v4
+        with: 
+          path: ./astro
 
   deploy:
     runs-on: ubuntu-latest

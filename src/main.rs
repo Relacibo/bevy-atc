@@ -52,6 +52,7 @@ fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let mut app = App::new();
+
     app.add_plugins((
         DefaultPlugins
             .set(WindowPlugin {
@@ -62,7 +63,17 @@ fn main() -> anyhow::Result<()> {
                 ..default()
             })
             // Prevents blurry sprites
-            .set(ImagePlugin::default_nearest()),
+            .set(ImagePlugin::default_nearest())
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    // provide the ID selector string here
+                    #[cfg(target_family = "wasm")]
+                    canvas: Some("#bevy-floppy-canvas".into()),
+                    // ... any other window properties ...
+                    ..default()
+                }),
+                ..default()
+            }),
         EntropyPlugin::<WyRand>::default(),
         GamePlugin,
         MenuPlugin,

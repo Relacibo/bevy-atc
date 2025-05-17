@@ -1,0 +1,24 @@
+---
+export type Props = {
+  id: string;
+  width: number;
+  height: number;
+};
+let { id, width, height } = Astro.props;
+---
+
+<script>
+  import init from "../../../dist/bevy-floppy";
+  
+  init().catch((error) => {
+    if (
+      !error.message.startsWith(
+        "Using exceptions for control flow, don't mind me. This isn't actually an error!"
+      )
+    ) {
+      throw error;
+    }
+  });
+</script>
+
+<canvas id={id} width={width} height={height}></canvas>
