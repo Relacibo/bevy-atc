@@ -10,7 +10,7 @@ export default defineConfig({
       viteStaticCopy({
         targets: [
           {
-            src: '../dist/assets/*', // Any folder with files
+            src: '../assets/*', // Any folder with files
             dest: 'assets' // Destination within the dist folder
           }
         ]

@@ -9,5 +9,3 @@ wasm-bindgen \
   --out-dir ./dist/ \
   --out-name "bevy-floppy" \
   ./target/wasm32-unknown-unknown/release/bevy-floppy.wasm || exit 1
-cp -r ./assets ./dist/
-cp -r ./public/* ./dist/
