@@ -105,10 +105,9 @@ fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilitySta
     commands.spawn((
         DevGuiRootComponent,
         Node {
-            height: Val::Percent(100.),
-            width: Val::Percent(100.),
             ..default()
         },
+        Transform::from_xyz(0., 0., -2.),
         visibility_state.to_visibility(),
         children![(
             Node {

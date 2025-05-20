@@ -11,9 +11,6 @@ use std::{
 use bevy::{
     input::common_conditions::{input_just_pressed, input_just_released},
     prelude::*,
-    render::camera,
-    state::commands,
-    text::TextBounds,
 };
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
@@ -246,17 +243,20 @@ fn setup_score_gui(mut commands: Commands) {
     commands.spawn((
         ScoreGuiRoot,
         Node {
-            height: Val::Vh(100.),
-            width: Val::Vw(100.),
+            height: Val::Px(100.),
+            width: Val::Px(300.),
+            align_self: AlignSelf::Start,
+            justify_self: JustifySelf::End,
             flex_direction: FlexDirection::Column,
             align_content: AlignContent::End,
             ..default()
         },
+        Transform::from_xyz(0., 0., -3.),
         children![(
             ScoreGui,
             Node {
-                height: Val::Px(100.),
-                width: Val::Px(100.),
+                height: Val::Percent(100.),
+                width: Val::Percent(100.),
                 margin: UiRect {
                     left: Val::Auto,
                     ..default()
@@ -600,7 +600,7 @@ fn setup(
             half_size: Vec2::new(floppy_alive_zone_x, floppy_alive_zone_y),
         })),
         MeshMaterial2d(materials.add(Color::Srgba(BACKGROUND_COLOR))),
-        Transform::from_xyz(0., 0., -1.),
+        Transform::from_xyz(0., 0., -20.),
     ));
     for camera in q_camera {
         commands
