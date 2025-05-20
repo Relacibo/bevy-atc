@@ -60,7 +60,10 @@ impl Plugin for GamePlugin {
             .register_type::<GameVariables>()
             .add_event::<GameVariablesEvent>()
             .insert_resource(GameVariables::default())
-            .add_systems(OnEnter(AppState::Game), (setup, start_game))
+            .add_systems(
+                OnEnter(AppState::Game),
+                (setup, start_game, setup_score_gui),
+            )
             .add_systems(
                 OnEnter(GameState::Running),
                 (
@@ -156,12 +159,24 @@ fn is_floppy_out_of_bounds(
 }
 
 fn handle_collision_events(
+    world: World,
+    commands: Commands,
     q_floppy: Query<(), With<Floppy>>,
     q_pipe: Query<(), With<Pipe>>,
     mut collision_events: EventReader<CollisionEvent>,
     mut game_state: ResMut<NextState<GameState>>,
 ) {
     for collision_event in collision_events.read() {
+        match collision_event {
+            CollisionEvent::Started(entity, entity1, ..) => {
+                let other = get_other_helper(q_floppy, entity, entity1);
+            }
+            CollisionEvent::Stopped(entity, entity1, ..) => {
+                let other = get_other_helper(q_floppy, entity, entity1);
+                world.get_entity(entity).unwrap().
+                commands.entity(other).
+            }
+        }
         if let CollisionEvent::Started(entity, entity1, ..) = collision_event {
             let floppy_and_pipe_collided = q_floppy.get(*entity).is_ok()
                 && q_pipe.get(*entity1).is_ok()
@@ -170,6 +185,18 @@ fn handle_collision_events(
                 game_state.set(GameState::FloppyDead);
             }
         }
+    }
+}
+
+fn get_other_helper<'a>(
+    q_floppy: Query<(), With<Floppy>>,
+    entity: &'a Entity,
+    entity1: &'a Entity,
+) -> &'a Entity {
+    if q_floppy.contains(*entity) {
+        entity1
+    } else {
+        entity
     }
 }
 
@@ -182,6 +209,37 @@ enum GameVariablesEvent {
         old: GameVariables,
         new: GameVariables,
     },
+}
+
+#[derive(Clone, Debug, Component)]
+struct ScoreGuiRoot;
+
+#[derive(Clone, Debug, Component)]
+struct ScoreGui;
+
+fn setup_score_gui(mut commands: Commands) {
+    commands.spawn((
+        ScoreGuiRoot,
+        Node {
+            height: Val::Percent(100.),
+            width: Val::Percent(100.),
+            flex_direction: FlexDirection::Column,
+            align_content: AlignContent::End,
+            ..default()
+        },
+        children![(
+            ScoreGui,
+            Node {
+                height: Val::Px(100.),
+                width: Val::Px(100.),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Start,
+                ..default()
+            },
+            BackgroundColor(Srgba::new(0.2, 0., 0.2, 0.4).into()),
+            Text("0".to_owned())
+        ),],
+    ));
 }
 
 fn handle_game_variables_event(
@@ -366,6 +424,9 @@ fn should_spawn_pipes(time: Res<Time>, next_spawn: Option<Res<PipeSpawnTimer>>) 
     time.elapsed() >= *next_spawn
 }
 
+#[derive(Clone, Debug, Component)]
+struct BetweenPipes;
+
 fn spawn_pipes(
     mut commands: Commands,
     mut rng: GlobalEntropy<WyRand>,
@@ -402,13 +463,12 @@ fn spawn_pipes(
             + (pipe_height_px + space) / 2.0;
 
     let x = PIPE_SPAWN_DESPAWN_X;
-    let spawns = [
+    let pipes = [
         (spawn_height, pipe_down_texture),
         (spawn_height - pipe_height_px - space, pipe_up_texture),
-    ];
-    for (y, texture) in spawns {
-        debug!("Spawning Pipe at ({x}, {y})");
-        commands.spawn((
+    ]
+    .map(|(y, texture)| {
+        (
             Pipe,
             Sprite {
                 image: texture.clone(),
@@ -421,8 +481,18 @@ fn spawn_pipes(
             Collider::cuboid(pipe_width_px / 2.0, pipe_height_px / 2.0),
             Sensor,
             ActiveCollisionTypes::DYNAMIC_KINEMATIC,
-        ));
-    }
+        )
+    });
+    commands.spawn_batch(pipes);
+
+    commands.spawn((
+        BetweenPipes,
+        RigidBody::KinematicVelocityBased,
+        Transform::from_xyz(x, spawn_height - space, 0.0),
+        Collider::cuboid(pipe_width_px / 2.0, space / 2.0),
+        Sensor,
+        ActiveCollisionTypes::DYNAMIC_KINEMATIC,
+    ));
     *next_pipe_spawn = PipeSpawnTimer::random(&mut rng, &time, &variables)
 }
 

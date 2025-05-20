@@ -1,18 +1,21 @@
 ---
 import background from "../assets/background.svg";
 import Floppy from "./Floppy.astro";
+import GithubLink from "./GithubLink.astro";
 ---
 
 <div id="container">
   <img id="background" src={background.src} alt="" fetchpriority="high" />
   <main>
     <Floppy id={"bevy-floppy-canvas"} width={1280} height={720} />
-    <section id="hero">
+    <section class="hero">
       <div>
-        <b>Left/right/up arrow</b> - Move <br /><b>R</b> - Kill/respawn Floppy <br
-        /><b>D</b> - Despawn pipes <br /><b>C</b> - Switch camera mode<br /><b
-          >L</b
-        > - Display game variable list
+        Move <b>Left/right/up arrow</b><br />Kill/respawn Floppy <b>R</b><br
+        />Despawn pipes <b>D</b><br />Switch camera mode <b>C</b><br />Display
+        game variable list <b>L</b>
+      </div>
+      <div class="icon-links">
+        <GithubLink />
       </div>
     </section>
   </main>
@@ -37,16 +40,20 @@ import Floppy from "./Floppy.astro";
 
   main {
     height: 100%;
-		width: 100%;
+    width: 100%;
     display: flex;
     justify-content: start;
   }
 
-  #hero {
+  .hero {
     display: flex;
-    align-items: start;
+    align-items: end;
     flex-direction: column;
     justify-content: end;
+    text-align: end;
+    margin-left: auto;
+    row-gap: 16px;
+    margin-right: 8px;
     padding: 16px;
   }
 
@@ -70,23 +77,13 @@ import Floppy from "./Floppy.astro";
     margin: 0;
   }
 
-  code {
-    display: inline-block;
-    background:
-      linear-gradient(66.77deg, #f3cddd 0%, #f5cee7 100%) padding-box,
-      linear-gradient(155deg, #d83333 0%, #f041ff 18%, #f5cee7 45%) border-box;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    padding: 6px 8px;
-  }
-
   @media screen and (max-width: 768px) {
     #container {
       display: flex;
       flex-direction: column;
     }
 
-    #hero {
+    .hero {
       display: block;
       padding-top: 10%;
     }
