@@ -1,4 +1,4 @@
-use bevy::{log::tracing_subscriber::field::debug, prelude::*};
+use bevy::prelude::*;
 
 pub fn despawn_all<T: Component>(
     mut commands: Commands,

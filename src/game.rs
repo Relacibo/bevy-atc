@@ -13,13 +13,13 @@ use bevy::{
     prelude::*,
     render::camera,
     state::commands,
+    text::TextBounds,
 };
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
 use bevy_rapier2d::{
     plugin::{NoUserData, RapierPhysicsPlugin},
     prelude::*,
-    rapier::prelude::RigidBodyVelocity,
     render::RapierDebugRenderPlugin,
 };
 use rand_core::RngCore;
@@ -69,6 +69,8 @@ impl Plugin for GamePlugin {
                 (
                     despawn_all::<DeathScreenGui>,
                     despawn_all::<Pipe>,
+                    despawn_all::<BetweenPipes>,
+                    reset_score,
                     spawn_floppy,
                     reset_camera.after(spawn_floppy),
                 ),
@@ -94,6 +96,7 @@ impl Plugin for GamePlugin {
                             .run_if(is_floppy_out_of_bounds.or(input_just_pressed(KeyCode::KeyR))),
                         handle_collision_events,
                         handle_game_variables_event,
+                        handle_score_change.run_if(state_changed::<Score>),
                     )
                         .run_if(in_state(GameState::Running)),
                     (start_game.run_if(input_just_pressed(KeyCode::KeyR)))
@@ -101,7 +104,8 @@ impl Plugin for GamePlugin {
                 )
                     .run_if(in_state(AppState::Game)),
             )
-            .insert_state(GameState::BeforeGame);
+            .insert_state(GameState::BeforeGame)
+            .insert_state(Score::default());
 
         if APP_CONFIG.dev_gui {
             app.add_systems(OnEnter(AppState::Game), setup_debug_gui)
@@ -115,6 +119,16 @@ impl Plugin for GamePlugin {
             app.add_plugins(RapierDebugRenderPlugin::default());
         }
     }
+}
+
+fn handle_score_change(query: Query<&mut Text, With<ScoreGui>>, score: Res<State<Score>>) {
+    for mut text in query {
+        text.0 = score.0.to_string();
+    }
+}
+
+fn reset_score(mut score: ResMut<NextState<Score>>) {
+    score.set(Score::default())
 }
 
 fn toggle_cam_mode(q_camera: Query<&mut FollowStateComponent, With<Camera2d>>) {
@@ -158,23 +172,31 @@ fn is_floppy_out_of_bounds(
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_collision_events(
-    world: World,
-    commands: Commands,
+    mut commands: Commands,
     q_floppy: Query<(), With<Floppy>>,
     q_pipe: Query<(), With<Pipe>>,
+    q_between_pipes: Query<Entity, With<BetweenPipes>>,
     mut collision_events: EventReader<CollisionEvent>,
     mut game_state: ResMut<NextState<GameState>>,
+    score: Res<State<Score>>,
+    mut next_score: ResMut<NextState<Score>>,
 ) {
     for collision_event in collision_events.read() {
         match collision_event {
             CollisionEvent::Started(entity, entity1, ..) => {
                 let other = get_other_helper(q_floppy, entity, entity1);
+                if q_pipe.contains(*other) {
+                    game_state.set(GameState::FloppyDead);
+                };
             }
             CollisionEvent::Stopped(entity, entity1, ..) => {
                 let other = get_other_helper(q_floppy, entity, entity1);
-                world.get_entity(entity).unwrap().
-                commands.entity(other).
+                if q_between_pipes.contains(*other) {
+                    next_score.set(Score(score.0 + 1));
+                    commands.entity(*other).despawn()
+                }
             }
         }
         if let CollisionEvent::Started(entity, entity1, ..) = collision_event {
@@ -217,12 +239,15 @@ struct ScoreGuiRoot;
 #[derive(Clone, Debug, Component)]
 struct ScoreGui;
 
+#[derive(Clone, Default, Hash, PartialEq, Eq, Debug, States)]
+struct Score(u32);
+
 fn setup_score_gui(mut commands: Commands) {
     commands.spawn((
         ScoreGuiRoot,
         Node {
-            height: Val::Percent(100.),
-            width: Val::Percent(100.),
+            height: Val::Vh(100.),
+            width: Val::Vw(100.),
             flex_direction: FlexDirection::Column,
             align_content: AlignContent::End,
             ..default()
@@ -232,12 +257,28 @@ fn setup_score_gui(mut commands: Commands) {
             Node {
                 height: Val::Px(100.),
                 width: Val::Px(100.),
+                margin: UiRect {
+                    left: Val::Auto,
+                    ..default()
+                },
+                justify_self: JustifySelf::End,
                 flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Start,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
                 ..default()
             },
             BackgroundColor(Srgba::new(0.2, 0., 0.2, 0.4).into()),
-            Text("0".to_owned())
+            Text("0".to_owned()),
+            TextFont {
+                font_size: 100.0,
+                ..default()
+            },
+            BorderColor(Color::BLACK),
+            Outline {
+                width: Val::Px(6.),
+                offset: Val::Px(6.),
+                color: Color::WHITE,
+            },
         ),],
     ));
 }
@@ -425,6 +466,9 @@ fn should_spawn_pipes(time: Res<Time>, next_spawn: Option<Res<PipeSpawnTimer>>) 
 }
 
 #[derive(Clone, Debug, Component)]
+struct PipeMovement;
+
+#[derive(Clone, Debug, Component)]
 struct BetweenPipes;
 
 fn spawn_pipes(
@@ -470,6 +514,7 @@ fn spawn_pipes(
     .map(|(y, texture)| {
         (
             Pipe,
+            PipeMovement,
             Sprite {
                 image: texture.clone(),
                 custom_size: Some(Vec2::new(pipe_width_px, pipe_height_px)),
@@ -487,8 +532,9 @@ fn spawn_pipes(
 
     commands.spawn((
         BetweenPipes,
+        PipeMovement,
         RigidBody::KinematicVelocityBased,
-        Transform::from_xyz(x, spawn_height - space, 0.0),
+        Transform::from_xyz(x, spawn_height - (pipe_height_px + space) / 2., 0.0),
         Collider::cuboid(pipe_width_px / 2.0, space / 2.0),
         Sensor,
         ActiveCollisionTypes::DYNAMIC_KINEMATIC,
@@ -499,7 +545,7 @@ fn spawn_pipes(
 fn update_pipes(
     mut commands: Commands,
     time: Res<Time>,
-    query: Query<(Entity, &mut Transform), With<Pipe>>,
+    query: Query<(Entity, &mut Transform), With<PipeMovement>>,
     variables: Res<GameVariables>,
 ) {
     let GameVariables {
