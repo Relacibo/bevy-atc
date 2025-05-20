@@ -242,44 +242,39 @@ struct Score(u32);
 fn setup_score_gui(mut commands: Commands) {
     commands.spawn((
         ScoreGuiRoot,
+        Transform::from_xyz(0., 0., -3.),
+        ScoreGui,
         Node {
             height: Val::Px(100.),
-            width: Val::Px(300.),
             align_self: AlignSelf::Start,
             justify_self: JustifySelf::End,
-            flex_direction: FlexDirection::Column,
+            flex_direction: FlexDirection::Row,
             align_content: AlignContent::End,
+            margin: UiRect {
+                left: Val::Auto,
+                ..default()
+            },
+            padding: UiRect {
+                left: Val::Px(12.0),
+                right: Val::Px(12.0),
+                ..default()
+            },
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
             ..default()
         },
-        Transform::from_xyz(0., 0., -3.),
-        children![(
-            ScoreGui,
-            Node {
-                height: Val::Percent(100.),
-                width: Val::Percent(100.),
-                margin: UiRect {
-                    left: Val::Auto,
-                    ..default()
-                },
-                justify_self: JustifySelf::End,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(Srgba::new(0.2, 0., 0.2, 0.4).into()),
-            Text("0".to_owned()),
-            TextFont {
-                font_size: 100.0,
-                ..default()
-            },
-            BorderColor(Color::BLACK),
-            Outline {
-                width: Val::Px(6.),
-                offset: Val::Px(6.),
-                color: Color::WHITE,
-            },
-        ),],
+        BackgroundColor(Srgba::new(0.2, 0., 0.2, 0.4).into()),
+        Text("0".to_owned()),
+        TextFont {
+            font_size: 100.0,
+            ..default()
+        },
+        BorderColor(Color::BLACK),
+        Outline {
+            width: Val::Px(6.),
+            offset: Val::Px(6.),
+            color: Color::WHITE,
+        },
     ));
 }
 
