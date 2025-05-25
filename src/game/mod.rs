@@ -11,7 +11,10 @@ use anyhow::anyhow;
 use bevy::{
     input::{
         common_conditions::{input_just_pressed, input_just_released, input_pressed},
-        mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButtonInput, MouseWheel},
+        mouse::{
+            AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButtonInput, MouseScrollUnit,
+            MouseWheel,
+        },
     },
     prelude::*,
 };
@@ -58,7 +61,7 @@ impl Plugin for GamePlugin {
                         input_pressed(MouseButton::Right)
                             .or(input_just_released(MouseButton::Right)),
                     ),
-                    zoom_camera,
+                    zoom_camera.run_if(was_mouse_wheel_used),
                 )
                     .run_if(in_state(GameState::Running)),
             )
@@ -140,7 +143,8 @@ fn update_aircraft(
         heading_diff_break_threshold_degrees: heading_change_break_threshold_degrees,
         heading_break_factor: heading_change_break_factor,
         max_delta_heading_degrees_per_second: max_heading_change_degrees_per_second,
-        delta_heading_acceleration_degrees_per_second: heading_change_acceleration_degrees_per_second,
+        delta_heading_acceleration_degrees_per_second:
+            heading_change_acceleration_degrees_per_second,
         speed_accuracy_knots,
         speed_diff_threshold_knots: speed_accuracy_threshold_knots,
         speed_break_factor,
@@ -235,23 +239,33 @@ fn move_camera(
     camera.translation.y += mouse_motion.delta.y;
 }
 
+fn was_mouse_wheel_used(mouse_wheel_input: Res<AccumulatedMouseScroll>) -> bool {
+    mouse_wheel_input.delta.y != 0.
+}
+
 fn zoom_camera(
     projection: Single<&mut Projection, With<Camera2d>>,
     mouse_wheel_input: Res<AccumulatedMouseScroll>,
 ) {
+    // https://bevyengine.org/examples/camera/projection-zoom/
     let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
         eprintln!("Wrong camera projection. Expected orthographic!");
         return;
     };
+
     // We want scrolling up to zoom in, decreasing the scale, so we negate the delta.
-    let delta_zoom = -mouse_wheel_input.delta.y * CAMERA_ZOOM_SPEED;
+    let delta_y = if mouse_wheel_input.unit == MouseScrollUnit::Line {
+        -mouse_wheel_input.delta.y
+    } else {
+        // When unit is Pixel, then the value is always 132 with my browser,
+        // but it probably depends on the configured sensitivity.
+        -mouse_wheel_input.delta.y / 100.
+    };
     // When changing scales, logarithmic changes are more intuitive.
     // To get this effect, we add 1 to the delta, so that a delta of 0
     // results in no multiplicative effect, positive values result in a multiplicative increase,
     // and negative values result in multiplicative decreases.
-    let multiplicative_zoom = 1. + delta_zoom;
-    projection.scale = projection.scale * multiplicative_zoom;
-
+    projection.scale *= 1. + delta_y * CAMERA_ZOOM_SPEED;
 }
 
 fn handle_dev_gui_events(

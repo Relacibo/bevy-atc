@@ -32,9 +32,7 @@ pub struct AppConfig {
 impl AppConfig {
     fn from_env() -> Self {
         let dev_gui = env::var("DEV_GUI").as_deref() != Ok("0");
-        Self {
-            dev_gui,
-        }
+        Self { dev_gui }
     }
 }
 
@@ -47,6 +45,11 @@ pub enum AppState {
 fn main() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     dotenvy::dotenv().ok();
+
+    #[cfg(target_family = "wasm")]
+    wasm_logger::init(wasm_logger::Config::default());
+    #[cfg(not(target_family = "wasm"))]
+    env_logger::init();
 
     let mut app = App::new();
 

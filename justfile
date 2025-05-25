@@ -4,5 +4,5 @@ dev-wasm:
 build-release-wasm:
     ./bash-scripts/build-release-wasm.sh
 
-serve-release-wasm:
-    npx http-server dist/
+astro-dev:
+    cd astro && astro dev
