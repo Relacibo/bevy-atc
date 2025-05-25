@@ -5,7 +5,7 @@ pub mod conversions {
     pub const DEGREES_TO_RADIANS: f64 = std::f64::consts::FRAC_PI_4 / 45.;
 }
 
-pub const PIXELS_PER_MILE: u32 = 10;
+pub const PIXELS_PER_MILE: u32 = 50;
 pub const FIXED_UPDATES_PER_SECOND: u32 = 60;
 pub const FIXED_UPDATE_LENGTH_SECOND: f32 = 1. / FIXED_UPDATES_PER_SECOND as f32;
 pub const PIXEL_PER_KNOT_SECOND: f64 =
