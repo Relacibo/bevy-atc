@@ -20,10 +20,17 @@ pub struct DevGuiVariableInputContainer {
 pub struct DevGuiVariableInput;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Event)]
-pub enum DevGuiEvent {
-    VariableAdded { key: String },
-    VariableRemoved { key: String },
-    VariableUpdated { key: String, value: String },
+pub struct DevGuiVariableUpdatedEvent {
+    pub key: String,
+    pub value: String,
+}
+
+pub trait DevGuiStructTrait: Struct + std::fmt::Debug {}
+
+#[derive(Debug, Event)]
+pub enum DevGuiInputEvent {
+    AddStruct(Box<dyn DevGuiStructTrait>),
+    RemoveAll,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
@@ -58,13 +65,15 @@ impl DevGuiVisibilityState {
 impl Plugin for DevGuiPlugin {
     fn build(&self, app: &mut bevy::app::App) {
         app.insert_state(DevGuiVisibilityState::Hidden)
-            .add_event::<DevGuiEvent>()
+            .add_event::<DevGuiVariableUpdatedEvent>()
+            .add_event::<DevGuiInputEvent>()
             .add_systems(Startup, setup)
             .add_systems(
                 Update,
                 (
                     handle_toggle_visibility.run_if(input_just_pressed(KeyCode::KeyL)),
                     handle_visibility_state_changed.run_if(state_changed::<DevGuiVisibilityState>),
+                    handle_input_events,
                     handle_ui_events.run_if(in_state(DevGuiVisibilityState::Visible)),
                 ),
             );
@@ -98,7 +107,7 @@ fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilitySta
         children![(
             Node {
                 height: Val::Px(300.0),
-                width: Val::Px(600.0),
+                width: Val::Px(800.0),
                 flex_direction: FlexDirection::Row,
                 overflow: Overflow::clip(),
                 align_items: AlignItems::Start,
@@ -113,6 +122,7 @@ fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilitySta
                 DevGuiScrollComponent,
                 Node {
                     flex_direction: FlexDirection::Column,
+                    width: Val::Percent(100.),
                     ..default()
                 },
                 Visibility::Inherited,
@@ -122,8 +132,44 @@ fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilitySta
     ));
 }
 
+pub fn handle_input_events(
+    mut commands: Commands,
+    mut events: EventReader<DevGuiInputEvent>,
+    q_root: Query<(Entity, Option<&Children>), With<DevGuiScrollComponent>>,
+) {
+    let Some((ui_root, children)) = q_root.iter().next() else {
+        error!("Unexpected: DevGuiComponent not found!");
+        return;
+    };
+    for event in events.read() {
+        match event {
+            DevGuiInputEvent::AddStruct(dev_gui_struct_trait) => {
+                let vars: Vec<(String, String)> = dev_gui_struct_trait
+                    .iter_fields()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        (
+                            dev_gui_struct_trait.name_at(i).unwrap().to_owned(),
+                            format!("{v:?}").trim_matches('\"').to_owned(),
+                        )
+                    })
+                    .collect();
+                for (key, value) in vars {
+                    let node_bundle = create_variable_input(ui_root, key, value);
+                    commands.spawn(node_bundle);
+                }
+            }
+            DevGuiInputEvent::RemoveAll => {
+                for child in children.iter().cloned().flatten() {
+                    commands.entity(*child).despawn();
+                }
+            }
+        }
+    }
+}
+
 pub fn handle_ui_events(
-    mut dev_gui_event_writer: EventWriter<DevGuiEvent>,
+    mut dev_gui_event_writer: EventWriter<DevGuiVariableUpdatedEvent>,
     q_variable_input_containers: Query<&DevGuiVariableInputContainer>,
     q_variable_inputs: Query<&ChildOf, With<DevGuiVariableInput>>,
     mut text_input_submit_event_reader: EventReader<TextSubmissionEvent>,
@@ -140,7 +186,7 @@ pub fn handle_ui_events(
             unreachable!()
         };
 
-        dev_gui_event_writer.write(DevGuiEvent::VariableUpdated {
+        dev_gui_event_writer.write(DevGuiVariableUpdatedEvent {
             key: key.to_owned(),
             value: text.clone(),
         });
@@ -158,16 +204,25 @@ fn create_variable_input(
         Node {
             flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::SpaceBetween,
+            width: Val::Percent(100.),
             ..default()
         },
         Visibility::Inherited,
         ChildOf(parent),
         children![
-            (Node::default(), Text(key), Visibility::Inherited,),
+            (
+                Node {
+                    overflow: Overflow::hidden(),
+                    max_width: Val::Px(350.),
+                    ..default()
+                },
+                Text(key),
+                Visibility::Inherited,
+            ),
             (
                 DevGuiVariableInput,
                 Node {
-                    width: Val::Px(100.),
+                    width: Val::Px(200.),
                     height: Val::Px(40.),
                     ..default()
                 },

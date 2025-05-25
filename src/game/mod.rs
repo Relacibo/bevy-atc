@@ -7,17 +7,25 @@ use std::{
 };
 
 use aircraft::{Aircraft, AircraftPhysics};
-use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use anyhow::anyhow;
+use bevy::{
+    input::{
+        common_conditions::{input_just_pressed, input_just_released, input_pressed},
+        mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButtonInput, MouseWheel},
+    },
+    prelude::*,
+};
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
 use heading::Heading;
 use rand_core::RngCore;
 
+static CAMERA_ZOOM_SPEED: f32 = 0.2;
 pub struct GamePlugin;
 
 use crate::{
     APP_CONFIG, AppState,
-    dev_gui::DevGuiEvent,
+    dev_gui::{DevGuiInputEvent, DevGuiStructTrait, DevGuiVariableUpdatedEvent},
     util::{
         consts::{FIXED_UPDATE_LENGTH_SECOND, PIXEL_PER_KNOT_SECOND, PIXELS_PER_MILE},
         entities::despawn_all,
@@ -43,7 +51,26 @@ impl Plugin for GamePlugin {
                 FixedUpdate,
                 update_aircraft.run_if(in_state(GameState::Running)),
             )
+            .add_systems(
+                Update,
+                (
+                    move_camera.run_if(
+                        input_pressed(MouseButton::Right)
+                            .or(input_just_released(MouseButton::Right)),
+                    ),
+                    zoom_camera,
+                )
+                    .run_if(in_state(GameState::Running)),
+            )
             .insert_state(GameState::BeforeGame);
+
+        if APP_CONFIG.dev_gui {
+            app.add_systems(OnEnter(AppState::Game), setup_dev_gui)
+                .add_systems(
+                    Update,
+                    (handle_dev_gui_events).run_if(in_state(AppState::Game)),
+                );
+        }
     }
 }
 
@@ -51,10 +78,14 @@ fn setup(
     mut commands: Commands,
     variables: Res<GameVariables>,
     mut game_state: ResMut<NextState<GameState>>,
+    camera: Single<Entity, With<Camera2d>>,
 ) {
     let GameVariables { .. } = *variables;
     commands.insert_resource(GameResources {});
     game_state.set(GameState::Running);
+    commands
+        .entity(*camera)
+        .insert(Transform::from_xyz(0., 0., 0.));
 }
 
 fn spawn_aircraft(
@@ -93,26 +124,30 @@ fn spawn_aircraft(
     ));
 }
 
+fn setup_dev_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiInputEvent>) {
+    writer.write(DevGuiInputEvent::AddStruct(
+        Box::new((*variables).clone()) as Box<dyn DevGuiStructTrait>
+    ));
+}
+
 fn update_aircraft(
-    mut commands: Commands,
-    mut query: Query<(&Aircraft, &mut AircraftPhysics, &mut Transform)>,
+    query: Query<(&Aircraft, &mut AircraftPhysics, &mut Transform)>,
     time: Res<Time>,
     game_variables: Res<GameVariables>,
 ) {
     let GameVariables {
         heading_accuracy_degrees,
-        heading_change_break_threshold_degrees,
-        heading_change_break_factor,
-        max_heading_change_degrees_per_second,
-        heading_change_acceleration_degrees_per_second,
+        heading_diff_break_threshold_degrees: heading_change_break_threshold_degrees,
+        heading_break_factor: heading_change_break_factor,
+        max_delta_heading_degrees_per_second: max_heading_change_degrees_per_second,
+        delta_heading_acceleration_degrees_per_second: heading_change_acceleration_degrees_per_second,
         speed_accuracy_knots,
-        speed_accuracy_threshold_knots,
+        speed_diff_threshold_knots: speed_accuracy_threshold_knots,
         speed_break_factor,
-        max_acceleration_knots_per_second,
-        acceleration_change_knots_per_second,
+        max_delta_speed_knots_per_second: max_acceleration_knots_per_second,
+        delta_speed_acceleration_knots_per_second: acceleration_change_knots_per_second,
     } = *game_variables;
-    let delta = time.delta();
-    let delta_seconds = delta.as_micros() as f64 / 1000000.;
+    let delta_seconds = time.delta_secs_f64();
     for (aircraft, mut physics, mut transform) in query {
         let Aircraft {
             cleared_altitude_feet,
@@ -192,33 +227,81 @@ fn update_aircraft(
     }
 }
 
-#[derive(Clone, Debug, Resource, Reflect)]
+fn move_camera(
+    mut camera: Single<&mut Transform, With<Camera2d>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+) {
+    camera.translation.x -= mouse_motion.delta.x;
+    camera.translation.y += mouse_motion.delta.y;
+}
+
+fn zoom_camera(
+    projection: Single<&mut Projection, With<Camera2d>>,
+    mouse_wheel_input: Res<AccumulatedMouseScroll>,
+) {
+    let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
+        eprintln!("Wrong camera projection. Expected orthographic!");
+        return;
+    };
+    // We want scrolling up to zoom in, decreasing the scale, so we negate the delta.
+    let delta_zoom = -mouse_wheel_input.delta.y * CAMERA_ZOOM_SPEED;
+    // When changing scales, logarithmic changes are more intuitive.
+    // To get this effect, we add 1 to the delta, so that a delta of 0
+    // results in no multiplicative effect, positive values result in a multiplicative increase,
+    // and negative values result in multiplicative decreases.
+    let multiplicative_zoom = 1. + delta_zoom;
+    projection.scale = projection.scale * multiplicative_zoom;
+
+}
+
+fn handle_dev_gui_events(
+    mut reader: EventReader<DevGuiVariableUpdatedEvent>,
+    mut variables: ResMut<GameVariables>,
+) {
+    for DevGuiVariableUpdatedEvent { key, value } in reader.read() {
+        debug!("Updated {key} -> {value}");
+        // let old = variables.clone();
+        let field = variables
+            .reflect_mut()
+            .as_struct()
+            .unwrap()
+            .field_mut(key)
+            .unwrap();
+        try_apply_parsed(field, value)
+            .inspect_err(|err| error!("{err}"))
+            .ok();
+    }
+}
+
+#[derive(Debug, Clone, Resource, Reflect)]
 struct GameVariables {
     heading_accuracy_degrees: f64,
-    heading_change_break_threshold_degrees: f64,
-    heading_change_break_factor: f64,
-    max_heading_change_degrees_per_second: f64,
-    heading_change_acceleration_degrees_per_second: f64,
+    heading_diff_break_threshold_degrees: f64,
+    heading_break_factor: f64,
+    max_delta_heading_degrees_per_second: f64,
+    delta_heading_acceleration_degrees_per_second: f64,
     speed_accuracy_knots: f64,
-    speed_accuracy_threshold_knots: f64,
+    speed_diff_threshold_knots: f64,
     speed_break_factor: f64,
-    max_acceleration_knots_per_second: f64,
-    acceleration_change_knots_per_second: f64,
+    max_delta_speed_knots_per_second: f64,
+    delta_speed_acceleration_knots_per_second: f64,
 }
+
+impl DevGuiStructTrait for GameVariables {}
 
 impl Default for GameVariables {
     fn default() -> Self {
         Self {
             heading_accuracy_degrees: 0.001,
-            heading_change_break_threshold_degrees: 1.0,
-            heading_change_break_factor: 4. / 5.,
-            max_heading_change_degrees_per_second: 10.0,
-            heading_change_acceleration_degrees_per_second: 0.5,
+            heading_diff_break_threshold_degrees: 1.0,
+            heading_break_factor: 4. / 5.,
+            max_delta_heading_degrees_per_second: 10.0,
+            delta_heading_acceleration_degrees_per_second: 0.5,
             speed_accuracy_knots: 0.05,
-            speed_accuracy_threshold_knots: 1.0,
+            speed_diff_threshold_knots: 1.0,
             speed_break_factor: 4. / 5.,
-            max_acceleration_knots_per_second: 1.,
-            acceleration_change_knots_per_second: 0.000005,
+            max_delta_speed_knots_per_second: 1.,
+            delta_speed_acceleration_knots_per_second: 0.000005,
         }
     }
 }
