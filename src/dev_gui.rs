@@ -1,14 +1,6 @@
-use std::{collections::BTreeMap, ops::Deref};
-
-use bevy::{
-    ecs::schedule::ScheduleLabel,
-    input::{common_conditions::input_just_pressed, keyboard::Key},
-    prelude::*,
-};
+use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use bevy_simple_scroll_view::{ScrollView, ScrollableContent};
-use bevy_ui_text_input::{
-    TextInputBuffer, TextInputContents, TextInputNode, TextInputPrompt, TextSubmissionEvent,
-};
+use bevy_ui_text_input::{TextInputNode, TextInputPrompt, TextSubmissionEvent};
 
 #[derive(Debug, Clone)]
 pub struct DevGuiPlugin;
@@ -29,10 +21,7 @@ pub struct DevGuiVariableInput;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Event)]
 pub enum DevGuiEvent {
-    ClearAllVariables,
-    AddVariables { vars: Vec<(String, String)> },
     VariableAdded { key: String },
-    RemoveVariables { keys: Vec<String> },
     VariableRemoved { key: String },
     VariableUpdated { key: String, value: String },
 }
@@ -76,7 +65,6 @@ impl Plugin for DevGuiPlugin {
                 (
                     handle_toggle_visibility.run_if(input_just_pressed(KeyCode::KeyL)),
                     handle_visibility_state_changed.run_if(state_changed::<DevGuiVisibilityState>),
-                    handle_events,
                     handle_ui_events.run_if(in_state(DevGuiVisibilityState::Visible)),
                 ),
             );
@@ -104,9 +92,7 @@ fn handle_toggle_visibility(
 fn setup(mut commands: Commands, visibility_state: Res<State<DevGuiVisibilityState>>) {
     commands.spawn((
         DevGuiRootComponent,
-        Node {
-            ..default()
-        },
+        Node { ..default() },
         Transform::from_xyz(0., 0., -2.),
         visibility_state.to_visibility(),
         children![(
@@ -158,61 +144,6 @@ pub fn handle_ui_events(
             key: key.to_owned(),
             value: text.clone(),
         });
-    }
-}
-
-pub fn handle_events(
-    mut commands: Commands,
-    q_root: Query<(Entity, Option<&Children>), With<DevGuiScrollComponent>>,
-    q_variable_input_containers: Query<&DevGuiVariableInputContainer>,
-    mut dev_gui_event_param_set: ParamSet<(EventReader<DevGuiEvent>, EventWriter<DevGuiEvent>)>,
-) {
-    let Some((ui_root, children)) = q_root.iter().next() else {
-        error!("Unexpected: DevGuiComponent not found!");
-        return;
-    };
-
-    let mut new_events = Vec::new();
-
-    for event in dev_gui_event_param_set.p0().read() {
-        match event {
-            DevGuiEvent::ClearAllVariables => {
-                for child in children.iter().cloned().flatten() {
-                    commands.entity(*child).despawn();
-                }
-            }
-            DevGuiEvent::AddVariables { vars } => {
-                for (key, value) in vars {
-                    let node_bundle = create_variable_input(ui_root, key, value);
-                    commands.spawn(node_bundle);
-                    new_events.push(DevGuiEvent::VariableAdded {
-                        key: key.to_owned(),
-                    })
-                }
-            }
-            DevGuiEvent::RemoveVariables { keys } => {
-                for child in children.iter().cloned().flatten() {
-                    let Ok(DevGuiVariableInputContainer { key }) =
-                        q_variable_input_containers.get(*child)
-                    else {
-                        continue;
-                    };
-
-                    if !keys.contains(key) {
-                        continue;
-                    }
-
-                    commands.entity(*child).despawn();
-                    new_events.push(DevGuiEvent::VariableRemoved {
-                        key: key.to_owned(),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    for new_event in new_events {
-        dev_gui_event_param_set.p1().write(new_event);
     }
 }
 

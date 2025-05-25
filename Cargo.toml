@@ -1,5 +1,5 @@
 [package]
-name = "bevy-floppy"
+name = "bevy-atc"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,7 +12,6 @@ bevy_rand = "0.11"
 bevy_prng = { version = "0.11", features = ["rand_chacha", "wyrand"] }
 dotenvy = "0.15.7"
 bevy_ui_text_input = { git = "https://github.com/ickshonpe/bevy_ui_text_input.git", branch = "master" }
-bevy_rapier2d = { git = "https://github.com/dimforge/bevy_rapier", branch = "master" }
 bevy_simple_scroll_view = "0.4.0"
 
 [target.'cfg(target_arch = "wasm32")']

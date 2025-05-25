@@ -1,21 +1,16 @@
 ---
 import background from "../assets/background.svg";
-import Floppy from "./Floppy.astro";
+import Bevy from "./Bevy.astro";
 import GithubLink from "./GithubLink.astro";
 ---
 
 <div id="container">
   <img id="background" src={background.src} alt="" fetchpriority="high" />
   <main>
-    <Floppy id={"bevy-floppy-canvas"} width={1280} height={720} />
+    <Bevy width={1280} height={720} />
     <section class="hero">
-      <div>
-        Move <b>Left/right/up arrow</b><br />Kill/respawn Floppy <b>R</b><br
-        />Despawn pipes <b>D</b><br />Switch camera mode <b>C</b><br />Display
-        game variable list <b>L</b>
-      </div>
       <div class="icon-links">
-        <GithubLink />
+        <GithubLink href = "https://www.github.com/Relacibo/bevy-atc"/>
       </div>
     </section>
   </main>

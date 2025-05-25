@@ -1,8 +1,11 @@
 ---
-
+export type Props = {
+  href: string
+};
+let { href } = Astro.props;
 ---
 
-<a href="https://www.github.com/Relacibo/bevy-floppy"
+<a href={href}
   ><svg
     xmlns="http://www.w3.org/2000/svg"
     width="63.19"

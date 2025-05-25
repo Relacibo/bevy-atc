@@ -1,14 +1,13 @@
 ---
 export type Props = {
-  id: string;
   width: number;
   height: number;
 };
-let { id, width, height } = Astro.props;
+let { width, height } = Astro.props;
 ---
 
 <script>
-  import init from "../../../dist/bevy-floppy";
+  import init from "../../../dist/bevy-atc";
   
   init().catch((error) => {
     if (
@@ -21,4 +20,4 @@ let { id, width, height } = Astro.props;
   });
 </script>
 
-<canvas id={id} width={width} height={height}></canvas>
+<canvas id={"bevy-canvas"} width={width} height={height}></canvas>

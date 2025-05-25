@@ -27,16 +27,13 @@ pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(AppConfig::from_env);
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     dev_gui: bool,
-    rapier_debug_render: bool,
 }
 
 impl AppConfig {
     fn from_env() -> Self {
         let dev_gui = env::var("DEV_GUI").as_deref() != Ok("0");
-        let rapier_debug_render = env::var("RAPIER_DEBUG_RENDER").as_deref() == Ok("1");
         Self {
             dev_gui,
-            rapier_debug_render,
         }
     }
 }
@@ -57,7 +54,7 @@ fn main() -> anyhow::Result<()> {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Floppy".to_owned(),
+                    title: "ATC".to_owned(),
                     ..default()
                 }),
                 ..default()
@@ -68,7 +65,7 @@ fn main() -> anyhow::Result<()> {
                 primary_window: Some(Window {
                     // provide the ID selector string here
                     #[cfg(target_family = "wasm")]
-                    canvas: Some("#bevy-floppy-canvas".into()),
+                    canvas: Some("#bevy-canvas".into()),
                     // ... any other window properties ...
                     ..default()
                 }),
