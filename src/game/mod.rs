@@ -22,10 +22,10 @@ use bevy::{
 };
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
+use camera::GameCameraPlugin;
 use heading::Heading;
 use rand_core::RngCore;
 
-static CAMERA_ZOOM_SPEED: f32 = 0.2;
 pub struct GamePlugin;
 
 use crate::{
@@ -40,6 +40,7 @@ use crate::{
 
 mod aircraft;
 mod aircraft_card;
+mod camera;
 mod heading;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
@@ -50,7 +51,7 @@ pub enum GameState {
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(AircraftCardPlugin)
+        app.add_plugins((GameCameraPlugin, AircraftCardPlugin))
             .register_type::<GameVariables>()
             .insert_resource(GameVariables::default())
             .add_event::<AircraftJustSpawned>()
@@ -58,17 +59,6 @@ impl Plugin for GamePlugin {
             .add_systems(
                 FixedUpdate,
                 update_aircrafts.run_if(in_state(GameState::Running)),
-            )
-            .add_systems(
-                Update,
-                (
-                    move_camera.run_if(
-                        input_pressed(MouseButton::Right)
-                            .or(input_just_released(MouseButton::Right)),
-                    ),
-                    zoom_camera.run_if(was_mouse_wheel_used),
-                )
-                    .run_if(in_state(GameState::Running)),
             )
             .insert_state(GameState::BeforeGame);
 
@@ -86,14 +76,10 @@ fn setup(
     mut commands: Commands,
     variables: Res<GameVariables>,
     mut game_state: ResMut<NextState<GameState>>,
-    camera: Single<Entity, With<Camera2d>>,
 ) {
     let GameVariables { .. } = *variables;
     commands.insert_resource(GameResources {});
     game_state.set(GameState::Running);
-    commands
-        .entity(*camera)
-        .insert(Transform::from_xyz(0., 0., 0.));
 }
 
 fn spawn_aircraft(
@@ -304,6 +290,8 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
         return true;
     }
 
+    // FIXME: airplane just falls from the sky, after reaching its cleared altitude,
+    // Also doesn't reach cleared heading.
     if required_change_abs < diff_threshold {
         *delta_val += delta_seconds * break_factor * required_change * *delta_val;
     } else {
@@ -314,43 +302,6 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
         }
     }
     false
-}
-
-fn move_camera(
-    mut camera: Single<&mut Transform, With<Camera2d>>,
-    mouse_motion: Res<AccumulatedMouseMotion>,
-) {
-    camera.translation.x -= mouse_motion.delta.x;
-    camera.translation.y += mouse_motion.delta.y;
-}
-
-fn was_mouse_wheel_used(mouse_wheel_input: Res<AccumulatedMouseScroll>) -> bool {
-    mouse_wheel_input.delta.y != 0.
-}
-
-fn zoom_camera(
-    projection: Single<&mut Projection, With<Camera2d>>,
-    mouse_wheel_input: Res<AccumulatedMouseScroll>,
-) {
-    // https://bevyengine.org/examples/camera/projection-zoom/
-    let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
-        eprintln!("Wrong camera projection. Expected orthographic!");
-        return;
-    };
-
-    // We want scrolling up to zoom in, decreasing the scale, so we negate the delta.
-    let delta_y = if mouse_wheel_input.unit == MouseScrollUnit::Line {
-        -mouse_wheel_input.delta.y
-    } else {
-        // When unit is Pixel, then the value is always 132 with my browser,
-        // but it probably depends on the configured sensitivity.
-        -mouse_wheel_input.delta.y / 100.
-    };
-    // When changing scales, logarithmic changes are more intuitive.
-    // To get this effect, we add 1 to the delta, so that a delta of 0
-    // results in no multiplicative effect, positive values result in a multiplicative increase,
-    // and negative values result in multiplicative decreases.
-    projection.scale *= 1. + delta_y * CAMERA_ZOOM_SPEED;
 }
 
 fn handle_dev_gui_events(
