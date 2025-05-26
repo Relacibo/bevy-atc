@@ -293,13 +293,19 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     // FIXME: airplane just falls from the sky, after reaching its cleared altitude,
     // Also doesn't reach cleared heading.
     if required_change_abs < diff_threshold {
-        *delta_val += delta_seconds * break_factor * required_change * *delta_val;
-    } else {
-        let delta_val_abs = delta_val.abs();
-        if delta_val_abs < max_delta_val {
-            *delta_val -= required_change.signum()
-                * ((delta_seconds * delta_val_acceleration).min(max_delta_val));
-        }
+        let additional = (required_change.signum() == delta_val.signum())
+            .then(|| max_delta_val / *delta_val)
+            .unwrap_or_default();
+
+        *delta_val += required_change.signum()
+            * delta_seconds
+            * break_factor
+            * (required_change.abs() + additional * delta_val_acceleration)
+                .min(delta_val_acceleration);
+        *delta_val = delta_val.clamp(-max_delta_val, max_delta_val);
+    } else if delta_val.abs() < max_delta_val {
+        *delta_val -= required_change.signum() * (delta_seconds * delta_val_acceleration);
+        *delta_val = delta_val.clamp(-max_delta_val, max_delta_val);
     }
     false
 }
@@ -376,3 +382,46 @@ const AIRCRAFT_COLOR: Srgba = Srgba {
 
 #[derive(Clone, Debug, Event)]
 struct AircraftJustSpawned(Entity);
+
+#[cfg(test)]
+mod tests {
+    use super::{MoveSmoothParams, move_smooth};
+
+    #[test]
+    fn test_move_ascend_over() {
+        let delta_val = &mut 2.;
+        let params = MoveSmoothParams {
+            delta_seconds: 0.02,
+            required_change: 1.,
+            accuracy: 0.1,
+            diff_threshold: 1.,
+            break_factor: 0.9,
+            max_delta_val: 2.,
+            delta_val_acceleration: 0.1,
+            delta_val,
+        };
+        let res = move_smooth(params);
+        assert!(!res);
+        dbg!(&delta_val);
+        assert!(*delta_val < 2.);
+    }
+
+    #[test]
+    fn test_move_ascend_over_below_theshold() {
+        let delta_val = &mut 2.;
+        let params = MoveSmoothParams {
+            delta_seconds: 0.02,
+            required_change: 0.9,
+            accuracy: 0.1,
+            diff_threshold: 1.,
+            break_factor: 0.9,
+            max_delta_val: 2.,
+            delta_val_acceleration: 0.1,
+            delta_val,
+        };
+        let res = move_smooth(params);
+        assert!(!res);
+        dbg!(&delta_val);
+        assert!(*delta_val < 2. && *delta_val > -2.);
+    }
+}

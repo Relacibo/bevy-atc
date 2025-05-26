@@ -49,7 +49,7 @@ impl Heading {
         if distance < 180.0 {
             distance
         } else {
-            360. - distance
+            -360. + distance
         }
     }
 
