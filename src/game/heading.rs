@@ -45,11 +45,11 @@ impl Heading {
     }
 
     pub fn required_change(self, cleared: Heading) -> f64 {
-        let distance = self.0 - cleared.0;
-        if distance.abs() < 180.0 {
+        let distance = self - cleared;
+        if distance < 180.0 {
             distance
         } else {
-            -distance
+            360. - distance
         }
     }
 

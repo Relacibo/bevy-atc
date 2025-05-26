@@ -305,7 +305,7 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     }
 
     if required_change_abs < diff_threshold {
-        *delta_val += delta_seconds * break_factor * required_change;
+        *delta_val += delta_seconds * break_factor * required_change * *delta_val;
     } else {
         let delta_val_abs = delta_val.abs();
         if delta_val_abs < max_delta_val {
@@ -396,9 +396,9 @@ impl Default for GameVariables {
     fn default() -> Self {
         Self {
             heading_accuracy_degrees: 0.001,
-            heading_diff_break_threshold_degrees: 1.0,
-            heading_break_factor: 4. / 5.,
-            max_delta_heading_degrees_per_second: 10.0,
+            heading_diff_break_threshold_degrees: 10.0,
+            heading_break_factor: 0.99,
+            max_delta_heading_degrees_per_second: 2.0,
             delta_heading_acceleration_degrees_per_second: 0.5,
             speed_accuracy_knots: 0.05,
             speed_diff_threshold_knots: 1.0,
