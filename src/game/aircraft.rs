@@ -6,6 +6,7 @@ use super::heading::Heading;
 pub struct Aircraft {
     pub call_sign: String,
     pub cleared_altitude_feet: Option<f64>,
+    pub wanted_altitude_feet: f64,
     pub cleared_heading: Option<Heading>,
     pub cleared_speed_knots: Option<f64>,
     pub wanted_speed_knots: f64,

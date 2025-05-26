@@ -1,12 +1,14 @@
 // Based on:
 // https://github.com/bevyengine/bevy/blob/main/examples/2d/sprite_animation.rs
 
+use core::f64;
 use std::{
     ops::{Add, Sub},
     time::Duration,
 };
 
 use aircraft::{Aircraft, AircraftPhysics};
+use aircraft_card::AircraftCardPlugin;
 use anyhow::anyhow;
 use bevy::{
     input::{
@@ -37,6 +39,7 @@ use crate::{
 };
 
 mod aircraft;
+mod aircraft_card;
 mod heading;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
@@ -47,12 +50,14 @@ pub enum GameState {
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<GameVariables>()
+        app.add_plugins(AircraftCardPlugin)
+            .register_type::<GameVariables>()
             .insert_resource(GameVariables::default())
+            .add_event::<AircraftJustSpawned>()
             .add_systems(OnEnter(AppState::Game), (setup, spawn_aircraft))
             .add_systems(
                 FixedUpdate,
-                update_aircraft.run_if(in_state(GameState::Running)),
+                update_aircrafts.run_if(in_state(GameState::Running)),
             )
             .add_systems(
                 Update,
@@ -95,36 +100,41 @@ fn spawn_aircraft(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut writer: EventWriter<AircraftJustSpawned>,
 ) {
-    commands.spawn((
-        Aircraft {
-            call_sign: "Mayday321".to_owned(),
-            cleared_altitude_feet: None,
-            cleared_heading: None,
-            cleared_speed_knots: None,
-            wanted_speed_knots: 300.,
-        },
-        AircraftPhysics {
-            altitude_feet: 10000.,
-            altitude_change_feet_per_second: 10.,
-            heading: Heading::from(30.),
-            heading_change_degrees_per_second: 1.0,
-            speed_knots: 300.,
-            acceleration_knots_per_second: 10.,
-        },
-        Mesh2d(meshes.add(Rectangle {
-            half_size: Vec2::new(5., 5.),
-        })),
-        MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-        Transform::from_xyz(0., 0., 10.),
-        children![(
+    let entity = commands
+        .spawn((
+            Aircraft {
+                call_sign: "Mayday321".to_owned(),
+                cleared_altitude_feet: None,
+                wanted_altitude_feet: 30000.,
+                cleared_heading: Some(200.0.into()),
+                cleared_speed_knots: None,
+                wanted_speed_knots: 350.,
+            },
+            AircraftPhysics {
+                altitude_feet: 7000.,
+                altitude_change_feet_per_second: 10.,
+                heading: Heading::from(30.),
+                heading_change_degrees_per_second: 1.0,
+                speed_knots: 300.,
+                acceleration_knots_per_second: 10.,
+            },
             Mesh2d(meshes.add(Rectangle {
-                half_size: Vec2::new(20., 1.),
+                half_size: Vec2::new(5., 5.),
             })),
             MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-            Transform::from_xyz(20., 0., 11.),
-        )],
-    ));
+            Transform::from_xyz(0., 0., 10.),
+            children![(
+                Mesh2d(meshes.add(Rectangle {
+                    half_size: Vec2::new(20., 1.),
+                })),
+                MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
+                Transform::from_xyz(20., 0., 11.),
+            )],
+        ))
+        .id();
+    writer.write(AircraftJustSpawned(entity));
 }
 
 fn setup_dev_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiInputEvent>) {
@@ -133,90 +143,104 @@ fn setup_dev_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiIn
     ));
 }
 
-fn update_aircraft(
+fn update_aircrafts(
     query: Query<(&Aircraft, &mut AircraftPhysics, &mut Transform)>,
     time: Res<Time>,
     game_variables: Res<GameVariables>,
 ) {
     let GameVariables {
         heading_accuracy_degrees,
-        heading_diff_break_threshold_degrees: heading_change_break_threshold_degrees,
-        heading_break_factor: heading_change_break_factor,
-        max_delta_heading_degrees_per_second: max_heading_change_degrees_per_second,
-        delta_heading_acceleration_degrees_per_second:
-            heading_change_acceleration_degrees_per_second,
+        heading_diff_break_threshold_degrees,
+        heading_break_factor,
+        max_delta_heading_degrees_per_second,
+        delta_heading_acceleration_degrees_per_second,
         speed_accuracy_knots,
-        speed_diff_threshold_knots: speed_accuracy_threshold_knots,
+        speed_diff_threshold_knots,
         speed_break_factor,
-        max_delta_speed_knots_per_second: max_acceleration_knots_per_second,
-        delta_speed_acceleration_knots_per_second: acceleration_change_knots_per_second,
+        max_delta_speed_knots_per_second,
+        delta_speed_acceleration_knots_per_second,
+        altitude_accuracy_feet,
+        altitude_change_break_factor,
+        altitude_diff_threshold_feet,
+        max_delta_altitude_feet_per_second,
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
-    for (aircraft, mut physics, mut transform) in query {
+    for (aircraft, physics, mut transform) in query {
         let Aircraft {
             cleared_altitude_feet,
+            wanted_altitude_feet,
             cleared_heading,
             cleared_speed_knots,
             wanted_speed_knots,
             ..
         } = aircraft;
 
-        if let Some(cleared_heading) = cleared_heading {
-            let required_change = physics.heading.required_change(*cleared_heading);
-            let required_change_abs = required_change.abs();
-            if required_change_abs >= heading_accuracy_degrees {
-                if required_change_abs < heading_change_break_threshold_degrees {
-                    physics.heading_change_degrees_per_second -=
-                        delta_seconds * required_change * heading_change_break_factor;
-                } else if physics.heading_change_degrees_per_second
-                    < max_heading_change_degrees_per_second
-                {
-                    physics.heading_change_degrees_per_second +=
-                        delta_seconds * heading_change_acceleration_degrees_per_second;
-                }
-            } else {
-                physics.heading_change_degrees_per_second = 0.0;
-                physics.heading = *cleared_heading;
+        let AircraftPhysics {
+            heading,
+            heading_change_degrees_per_second,
+            speed_knots,
+            acceleration_knots_per_second,
+            altitude_feet,
+            altitude_change_feet_per_second,
+        } = physics.into_inner();
+
+        let wanted = cleared_heading.unwrap_or(*heading);
+        let required_change = heading.required_change(wanted);
+
+        if *heading_change_degrees_per_second != 0. || required_change != 0. {
+            let params = MoveSmoothParams {
+                delta_seconds,
+                required_change,
+                accuracy: heading_accuracy_degrees,
+                diff_threshold: heading_diff_break_threshold_degrees,
+                break_factor: heading_break_factor,
+                max_delta_val: max_delta_heading_degrees_per_second,
+                delta_val_acceleration: delta_heading_acceleration_degrees_per_second,
+                delta_val: heading_change_degrees_per_second,
+            };
+            if move_smooth(params) {
+                *heading_change_degrees_per_second = 0.0;
+                *heading = wanted;
                 transform.rotation = Quat::from_axis_angle(
                     Vec3 {
                         z: -1.,
                         ..default()
                     },
-                    cleared_heading.to_rotation() as f32,
+                    wanted.to_rotation() as f32,
                 );
             }
         }
-        if physics.heading_change_degrees_per_second != 0. {
-            physics.heading = physics
-                .heading
-                .change(delta_seconds * physics.heading_change_degrees_per_second);
+        if *heading_change_degrees_per_second != 0. {
+            *heading = heading.change(delta_seconds * *heading_change_degrees_per_second);
             transform.rotation = Quat::from_axis_angle(
                 Vec3 {
                     z: -1.,
                     ..default()
                 },
-                physics.heading.to_rotation() as f32,
+                heading.to_rotation() as f32,
             );
         }
 
         // speed
-        let wanted_speed = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
-        let required_change = physics.speed_knots - wanted_speed;
-        let required_change_abs = required_change.abs();
-        if required_change_abs >= speed_accuracy_knots {
-            if required_change_abs < speed_accuracy_threshold_knots {
-                physics.acceleration_knots_per_second -=
-                    delta_seconds * speed_break_factor * required_change;
-            } else if physics.acceleration_knots_per_second < max_acceleration_knots_per_second {
-                physics.acceleration_knots_per_second +=
-                    delta_seconds * acceleration_change_knots_per_second;
+        let wanted = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
+        let required_change = -*speed_knots + wanted;
+        if required_change != 0. || *acceleration_knots_per_second != 0. {
+            let params = MoveSmoothParams {
+                delta_seconds,
+                required_change,
+                accuracy: speed_accuracy_knots,
+                diff_threshold: speed_diff_threshold_knots,
+                break_factor: speed_break_factor,
+                max_delta_val: max_delta_speed_knots_per_second,
+                delta_val_acceleration: delta_speed_acceleration_knots_per_second,
+                delta_val: acceleration_knots_per_second,
+            };
+            if move_smooth(params) {
+                *acceleration_knots_per_second = 0.0;
+                *speed_knots = wanted;
             }
-        } else {
-            physics.acceleration_knots_per_second = 0.0;
-            physics.speed_knots = wanted_speed;
         }
-
-        physics.speed_knots += physics.acceleration_knots_per_second;
+        *speed_knots += *acceleration_knots_per_second;
 
         let (Vec3 { z, .. }, angle) = transform.rotation.to_axis_angle();
         let angle = z * angle;
@@ -225,10 +249,71 @@ fn update_aircraft(
             y: y_part,
         } = Vec2::from_angle(angle);
         transform.translation.x +=
-            (physics.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * x_part;
+            (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * x_part;
         transform.translation.y +=
-            (physics.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
+            (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
+
+        // altitude
+
+        let wanted = cleared_altitude_feet.unwrap_or(*wanted_altitude_feet);
+        let required_change = -*altitude_feet + wanted;
+        if *altitude_change_feet_per_second != 0. || required_change != 0. {
+            let params = MoveSmoothParams {
+                delta_seconds,
+                required_change,
+                accuracy: altitude_accuracy_feet,
+                diff_threshold: altitude_diff_threshold_feet,
+                break_factor: altitude_change_break_factor,
+                max_delta_val: max_delta_speed_knots_per_second,
+                delta_val_acceleration: max_delta_altitude_feet_per_second,
+                delta_val: altitude_change_feet_per_second,
+            };
+            if move_smooth(params) {
+                *altitude_change_feet_per_second = 0.0;
+                *altitude_feet = wanted;
+            }
+        }
+        *altitude_feet += *altitude_change_feet_per_second;
     }
+}
+
+struct MoveSmoothParams<'a> {
+    delta_seconds: f64,
+    required_change: f64,
+    accuracy: f64,
+    diff_threshold: f64,
+    break_factor: f64,
+    max_delta_val: f64,
+    delta_val_acceleration: f64,
+    delta_val: &'a mut f64,
+}
+
+fn move_smooth(params: MoveSmoothParams) -> bool {
+    let MoveSmoothParams {
+        delta_seconds,
+        required_change,
+        accuracy,
+        diff_threshold,
+        break_factor,
+        max_delta_val,
+        delta_val_acceleration,
+        delta_val,
+    } = params;
+    let required_change_abs = required_change.abs();
+    if required_change_abs < accuracy {
+        return true;
+    }
+
+    if required_change_abs < diff_threshold {
+        *delta_val += delta_seconds * break_factor * required_change;
+    } else {
+        let delta_val_abs = delta_val.abs();
+        if delta_val_abs < max_delta_val {
+            *delta_val -= required_change.signum()
+                * ((delta_seconds * delta_val_acceleration).min(max_delta_val));
+        }
+    }
+    false
 }
 
 fn move_camera(
@@ -299,6 +384,10 @@ struct GameVariables {
     speed_break_factor: f64,
     max_delta_speed_knots_per_second: f64,
     delta_speed_acceleration_knots_per_second: f64,
+    altitude_accuracy_feet: f64,
+    altitude_diff_threshold_feet: f64,
+    altitude_change_break_factor: f64,
+    max_delta_altitude_feet_per_second: f64,
 }
 
 impl DevGuiStructTrait for GameVariables {}
@@ -316,6 +405,10 @@ impl Default for GameVariables {
             speed_break_factor: 4. / 5.,
             max_delta_speed_knots_per_second: 1.,
             delta_speed_acceleration_knots_per_second: 0.000005,
+            altitude_accuracy_feet: 3.,
+            altitude_diff_threshold_feet: 300.,
+            altitude_change_break_factor: 4. / 5.,
+            max_delta_altitude_feet_per_second: 100.0,
         }
     }
 }
@@ -329,3 +422,6 @@ const AIRCRAFT_COLOR: Srgba = Srgba {
     blue: 0.3,
     alpha: 1.0,
 };
+
+#[derive(Clone, Debug, Event)]
+struct AircraftJustSpawned(Entity);

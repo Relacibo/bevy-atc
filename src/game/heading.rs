@@ -7,7 +7,7 @@ pub struct Heading(f64);
 
 impl From<f64> for Heading {
     fn from(value: f64) -> Self {
-        Heading(value)
+        Heading(value % 360.)
     }
 }
 
@@ -15,8 +15,7 @@ impl Add for Heading {
     type Output = f64;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let res = (self.0 + rhs.0) % 360.;
-        res
+        (self.0 + rhs.0) % 360.
     }
 }
 
@@ -24,8 +23,7 @@ impl Sub for Heading {
     type Output = f64;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        let res = (self.0 - rhs.0) % 360.;
-        res
+        (self.0 - rhs.0) % 360.
     }
 }
 
@@ -47,11 +45,15 @@ impl Heading {
     }
 
     pub fn required_change(self, cleared: Heading) -> f64 {
-        let distance = self - cleared;
+        let distance = self.0 - cleared.0;
         if distance.abs() < 180.0 {
             distance
         } else {
             -distance
         }
+    }
+
+    pub fn get(&self) -> f64 {
+        self.0
     }
 }

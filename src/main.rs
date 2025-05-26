@@ -46,11 +46,6 @@ fn main() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     dotenvy::dotenv().ok();
 
-    #[cfg(target_family = "wasm")]
-    wasm_logger::init(wasm_logger::Config::default());
-    #[cfg(not(target_family = "wasm"))]
-    env_logger::init();
-
     let mut app = App::new();
 
     app.add_plugins((

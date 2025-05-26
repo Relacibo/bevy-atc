@@ -12,12 +12,11 @@ bevy_prng = { version = "0.11", features = ["rand_chacha", "wyrand"] }
 dotenvy = "0.15.7"
 bevy_ui_text_input = { git = "https://github.com/ickshonpe/bevy_ui_text_input.git", branch = "master" }
 bevy_simple_scroll_view = "0.4.0"
-log = "0.4.6"
 env_logger = "0.11.8"
+strum = { version = "0.27.1", features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")']
 runner = "wasm-server-runner"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
-wasm-logger = "0.2.0"

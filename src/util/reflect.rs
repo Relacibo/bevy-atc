@@ -7,6 +7,7 @@ pub fn try_apply_parsed(
     match (*field).reflect_type_path() {
         "String" => field.try_apply(val)?,
         "f32" => field.try_apply(&val.parse::<f32>()?)?,
+        "f64" => field.try_apply(&val.parse::<f64>()?)?,
         "bool" => field.try_apply(&val.parse::<bool>()?)?,
         _ => todo!("Type not yet supported!"),
     }
