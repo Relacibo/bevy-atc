@@ -182,7 +182,7 @@ fn update_aircrafts(
                 break_factor: heading_break_factor,
                 max_delta_val: max_delta_heading_degrees_per_second,
                 delta_val_acceleration: delta_heading_acceleration_degrees_per_second,
-                delta_val: heading_change_degrees_per_second,
+               delta_val: heading_change_degrees_per_second,
             };
             if move_smooth(params) {
                 *heading_change_degrees_per_second = 0.0;
@@ -257,7 +257,7 @@ fn update_aircrafts(
             if move_smooth(params) {
                 *altitude_change_feet_per_second = 0.0;
                 *altitude_feet = wanted;
-            }
+            } 
         }
         *altitude_feet += *altitude_change_feet_per_second;
     }
