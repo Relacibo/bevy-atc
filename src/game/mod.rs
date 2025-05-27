@@ -169,6 +169,8 @@ fn update_aircrafts(
 
         // heading
         let wanted = cleared_heading.unwrap_or(*heading);
+        // FIXME: With heading, maybe not always correct, in proximity of 
+        // required_change = 180 degrees, moving away from wanted heading
         let required_change = heading.required_change(wanted);
 
         if *heading_change_degrees_per_second != 0. || required_change != 0. {
@@ -284,31 +286,16 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     }
 
     let required_signum = required_change.signum();
+    // If wrong direction: break
     if required_signum != delta_val.signum() {
         *delta_val += required_signum * (delta_seconds * delta_val_acceleration);
         return false;
     }
 
-    // smooth part
-    // f1(x) = (+-)delta_val_acceleration * x + delta_val
-    // solve: f1(x1) = (+-)max_delta_val
-    let x1 = ((max_delta_val - required_signum * *delta_val) / delta_val_acceleration).max(0.);
+    let x = ((max_delta_val - required_signum * *delta_val + 0.5) /  delta_val_acceleration).max(0.);
+    
+    let should_break = required_change_abs <= x;
 
-    // Required Change after smooth part:
-    // Integral:
-    // f1_int(x) = (+-)delta_val_acceleration/2 * x^2
-    //
-    // linear part
-    // f2(x) = (+-)max_delta_val * x + f1_int(x)
-    // solve: f2(x1) = 0
-    let x2 = delta_val_acceleration * x1 * x1 / 2. / max_delta_val;
-
-    let should_break = required_change_abs <= x1 + x2;
-
-    dbg!(*delta_val);
-    dbg!(x1);
-    dbg!(x2);
-    dbg!(&required_change);
     dbg!(should_break);
 
     if should_break || required_signum * *delta_val < max_delta_val {
