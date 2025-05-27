@@ -94,7 +94,7 @@ fn spawn_aircraft(
                 call_sign: "Mayday321".to_owned(),
                 cleared_altitude_feet: None,
                 wanted_altitude_feet: 30000.,
-                cleared_heading: Some(200.0.into()),
+                cleared_heading: Some(40.0.into()),
                 cleared_speed_knots: None,
                 wanted_speed_knots: 350.,
             },
@@ -165,11 +165,11 @@ fn update_aircrafts(
             altitude_change_feet_per_second,
         } = physics.into_inner();
 
-        dbg!("Heading");
+        // dbg!("Heading");
 
         // heading
         let wanted = cleared_heading.unwrap_or(*heading);
-        // FIXME: With heading, maybe not always correct, in proximity of 
+        // FIXME: With heading, maybe not always correct, in proximity of
         // required_change = 180 degrees, moving away from wanted heading
         let required_change = heading.required_change(wanted);
 
@@ -205,7 +205,7 @@ fn update_aircrafts(
             );
         }
 
-        dbg!("Speed");
+        // dbg!("Speed");
         // speed
         let wanted = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
         let required_change = -*speed_knots + wanted;
@@ -237,7 +237,7 @@ fn update_aircrafts(
             (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
 
         // altitude
-        dbg!("Altitude");
+        // dbg!("Altitude");
 
         let wanted = cleared_altitude_feet.unwrap_or(*wanted_altitude_feet);
         let required_change = -*altitude_feet + wanted;
@@ -257,7 +257,7 @@ fn update_aircrafts(
         }
         *altitude_feet += *altitude_change_feet_per_second;
 
-        dbg!("---------");
+        // dbg!("---------");
     }
 }
 
@@ -292,11 +292,27 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
         return false;
     }
 
-    let x = ((max_delta_val - required_signum * *delta_val + 0.5) /  delta_val_acceleration).max(0.);
-    
-    let should_break = required_change_abs <= x;
+    let delta_val_abs = delta_val.abs();
+    // Required break time:
+    // (+-) == required_signum
+    // f(x) = (-+)delta_val_acceleration * x + delta_val
+    // solve: f(x1) = 0
+    // x = -delta_val / (-+)delta_val_acceleration
+    // x = (+-) (+-)|delta_val| / delta_val_acceleration [because delta_val.signum() == required_signum]
+    let x1 = delta_val_abs / delta_val_acceleration;
 
-    dbg!(should_break);
+    // required breaking distance
+    // f1_int(x) = (-+)delta_val_acceleration/2 * x^2 + delta_val * x
+    // f1_int(x1)
+    let breaking_distance = required_signum * delta_val_acceleration * x1 * x1 / 2. + *delta_val * x1;
+
+    let should_break = required_change_abs <= breaking_distance;
+
+    // dbg!(*delta_val);
+    // dbg!(required_change);
+    // dbg!(breaking_distance);
+    // dbg!(x1);
+    // dbg!(should_break);
 
     if should_break || required_signum * *delta_val < max_delta_val {
         let direction = if should_break { -1. } else { 1. };
