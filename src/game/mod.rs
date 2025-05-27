@@ -99,12 +99,12 @@ fn spawn_aircraft(
                 wanted_speed_knots: 350.,
             },
             AircraftPhysics {
-                altitude_feet: 7000.,
-                altitude_change_feet_per_second: 10.,
                 heading: Heading::from(30.),
                 heading_change_degrees_per_second: 1.0,
                 speed_knots: 300.,
-                acceleration_knots_per_second: 10.,
+                acceleration_knots_per_second: 1.,
+                altitude_feet: 7000.,
+                altitude_change_feet_per_second: 10.,
             },
             Mesh2d(meshes.add(Rectangle {
                 half_size: Vec2::new(5., 5.),
@@ -143,6 +143,7 @@ fn update_aircrafts(
         delta_speed_acceleration_knots_per_second,
         altitude_accuracy_feet,
         max_delta_altitude_feet_per_second,
+        delta_altitude_acceleration_feet_per_second,
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
     for (aircraft, physics, mut transform) in query {
@@ -243,8 +244,8 @@ fn update_aircrafts(
                 delta_seconds,
                 required_change,
                 accuracy: altitude_accuracy_feet,
-                max_delta_val: max_delta_speed_knots_per_second,
-                delta_val_acceleration: max_delta_altitude_feet_per_second,
+                max_delta_val: max_delta_altitude_feet_per_second,
+                delta_val_acceleration: delta_altitude_acceleration_feet_per_second,
                 delta_val: altitude_change_feet_per_second,
             };
             if move_smooth(params) {
@@ -289,20 +290,24 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     }
 
     // smooth part
-    // f1(x1) = (+-)delta_val_acceleration * x1 + delta_val
+    // f1(x) = (+-)delta_val_acceleration * x + delta_val
     // solve: f1(x1) = (+-)max_delta_val
-    let x1 = (max_delta_val - *delta_val) / delta_val_acceleration;
+    let x1 = ((max_delta_val - required_signum * *delta_val) / delta_val_acceleration).max(0.);
 
-    // f1_int(x1) = (+-)delta_val_acceleration/2 * x^2 + required_change
-    let tangent_point = (required_signum * delta_val_acceleration * x1 * x1 / 2.) + required_change;
-
+    // Required Change after smooth part:
+    // Integral:
+    // f1_int(x) = (+-)delta_val_acceleration/2 * x^2
+    //
     // linear part
-    // f2(x2) = max_delta_val * x2 + tangent_point
+    // f2(x) = (+-)max_delta_val * x + f1_int(x)
     // solve: f2(x1) = 0
-    let x2 = tangent_point / max_delta_val;
+    let x2 = delta_val_acceleration * x1 * x1 / 2. / max_delta_val;
 
-    let should_break = required_change <= x1 + x2;
+    let should_break = required_change_abs <= x1 + x2;
 
+    dbg!(*delta_val);
+    dbg!(x1);
+    dbg!(x2);
     dbg!(&required_change);
     dbg!(should_break);
 
@@ -343,6 +348,7 @@ struct GameVariables {
     delta_speed_acceleration_knots_per_second: f64,
     altitude_accuracy_feet: f64,
     max_delta_altitude_feet_per_second: f64,
+    delta_altitude_acceleration_feet_per_second: f64,
 }
 
 impl DevGuiStructTrait for GameVariables {}
@@ -350,14 +356,15 @@ impl DevGuiStructTrait for GameVariables {}
 impl Default for GameVariables {
     fn default() -> Self {
         Self {
-            heading_accuracy_degrees: 0.001,
+            heading_accuracy_degrees: 0.2,
             max_delta_heading_degrees_per_second: 2.0,
-            delta_heading_acceleration_degrees_per_second: 0.5,
-            speed_accuracy_knots: 0.05,
-            max_delta_speed_knots_per_second: 1.,
-            delta_speed_acceleration_knots_per_second: 0.000005,
-            altitude_accuracy_feet: 3.,
+            delta_heading_acceleration_degrees_per_second: 0.1,
+            speed_accuracy_knots: 0.2,
+            max_delta_speed_knots_per_second: 2.,
+            delta_speed_acceleration_knots_per_second: 0.1,
+            altitude_accuracy_feet: 10.,
             max_delta_altitude_feet_per_second: 100.0,
+            delta_altitude_acceleration_feet_per_second: 5.,
         }
     }
 }
