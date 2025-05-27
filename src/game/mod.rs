@@ -136,18 +136,12 @@ fn update_aircrafts(
 ) {
     let GameVariables {
         heading_accuracy_degrees,
-        heading_diff_break_threshold_degrees,
-        heading_break_factor,
         max_delta_heading_degrees_per_second,
         delta_heading_acceleration_degrees_per_second,
         speed_accuracy_knots,
-        speed_diff_threshold_knots,
-        speed_break_factor,
         max_delta_speed_knots_per_second,
         delta_speed_acceleration_knots_per_second,
         altitude_accuracy_feet,
-        altitude_change_break_factor,
-        altitude_diff_threshold_feet,
         max_delta_altitude_feet_per_second,
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
@@ -170,6 +164,9 @@ fn update_aircrafts(
             altitude_change_feet_per_second,
         } = physics.into_inner();
 
+        dbg!("Heading");
+
+        // heading
         let wanted = cleared_heading.unwrap_or(*heading);
         let required_change = heading.required_change(wanted);
 
@@ -178,11 +175,9 @@ fn update_aircrafts(
                 delta_seconds,
                 required_change,
                 accuracy: heading_accuracy_degrees,
-                diff_threshold: heading_diff_break_threshold_degrees,
-                break_factor: heading_break_factor,
                 max_delta_val: max_delta_heading_degrees_per_second,
                 delta_val_acceleration: delta_heading_acceleration_degrees_per_second,
-               delta_val: heading_change_degrees_per_second,
+                delta_val: heading_change_degrees_per_second,
             };
             if move_smooth(params) {
                 *heading_change_degrees_per_second = 0.0;
@@ -207,6 +202,7 @@ fn update_aircrafts(
             );
         }
 
+        dbg!("Speed");
         // speed
         let wanted = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
         let required_change = -*speed_knots + wanted;
@@ -215,8 +211,6 @@ fn update_aircrafts(
                 delta_seconds,
                 required_change,
                 accuracy: speed_accuracy_knots,
-                diff_threshold: speed_diff_threshold_knots,
-                break_factor: speed_break_factor,
                 max_delta_val: max_delta_speed_knots_per_second,
                 delta_val_acceleration: delta_speed_acceleration_knots_per_second,
                 delta_val: acceleration_knots_per_second,
@@ -240,6 +234,7 @@ fn update_aircrafts(
             (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
 
         // altitude
+        dbg!("Altitude");
 
         let wanted = cleared_altitude_feet.unwrap_or(*wanted_altitude_feet);
         let required_change = -*altitude_feet + wanted;
@@ -248,8 +243,6 @@ fn update_aircrafts(
                 delta_seconds,
                 required_change,
                 accuracy: altitude_accuracy_feet,
-                diff_threshold: altitude_diff_threshold_feet,
-                break_factor: altitude_change_break_factor,
                 max_delta_val: max_delta_speed_knots_per_second,
                 delta_val_acceleration: max_delta_altitude_feet_per_second,
                 delta_val: altitude_change_feet_per_second,
@@ -257,9 +250,11 @@ fn update_aircrafts(
             if move_smooth(params) {
                 *altitude_change_feet_per_second = 0.0;
                 *altitude_feet = wanted;
-            } 
+            }
         }
         *altitude_feet += *altitude_change_feet_per_second;
+
+        dbg!("---------");
     }
 }
 
@@ -267,8 +262,6 @@ struct MoveSmoothParams<'a> {
     delta_seconds: f64,
     required_change: f64,
     accuracy: f64,
-    diff_threshold: f64,
-    break_factor: f64,
     max_delta_val: f64,
     delta_val_acceleration: f64,
     delta_val: &'a mut f64,
@@ -279,32 +272,43 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
         delta_seconds,
         required_change,
         accuracy,
-        diff_threshold,
-        break_factor,
         max_delta_val,
         delta_val_acceleration,
         delta_val,
     } = params;
     let required_change_abs = required_change.abs();
+
     if required_change_abs < accuracy {
         return true;
     }
 
-    // FIXME: airplane just falls from the sky, after reaching its cleared altitude,
-    // Also doesn't reach cleared heading.
-    if required_change_abs < diff_threshold {
-        let additional = (required_change.signum() == delta_val.signum())
-            .then(|| max_delta_val / *delta_val)
-            .unwrap_or_default();
+    let required_signum = required_change.signum();
+    if required_signum != delta_val.signum() {
+        *delta_val += required_signum * (delta_seconds * delta_val_acceleration);
+        return false;
+    }
 
-        *delta_val += required_change.signum()
-            * delta_seconds
-            * break_factor
-            * (required_change.abs() + additional * delta_val_acceleration)
-                .min(delta_val_acceleration);
-        *delta_val = delta_val.clamp(-max_delta_val, max_delta_val);
-    } else if delta_val.abs() < max_delta_val {
-        *delta_val -= required_change.signum() * (delta_seconds * delta_val_acceleration);
+    // smooth part
+    // f1(x1) = (+-)delta_val_acceleration * x1 + delta_val
+    // solve: f1(x1) = (+-)max_delta_val
+    let x1 = (max_delta_val - *delta_val) / delta_val_acceleration;
+
+    // f1_int(x1) = (+-)delta_val_acceleration/2 * x^2 + required_change
+    let tangent_point = (required_signum * delta_val_acceleration * x1 * x1 / 2.) + required_change;
+
+    // linear part
+    // f2(x2) = max_delta_val * x2 + tangent_point
+    // solve: f2(x1) = 0
+    let x2 = tangent_point / max_delta_val;
+
+    let should_break = required_change <= x1 + x2;
+
+    dbg!(&required_change);
+    dbg!(should_break);
+
+    if should_break || required_signum * *delta_val < max_delta_val {
+        let direction = if should_break { -1. } else { 1. };
+        *delta_val += direction * required_signum * (delta_seconds * delta_val_acceleration);
         *delta_val = delta_val.clamp(-max_delta_val, max_delta_val);
     }
     false
@@ -332,18 +336,12 @@ fn handle_dev_gui_events(
 #[derive(Debug, Clone, Resource, Reflect)]
 struct GameVariables {
     heading_accuracy_degrees: f64,
-    heading_diff_break_threshold_degrees: f64,
-    heading_break_factor: f64,
     max_delta_heading_degrees_per_second: f64,
     delta_heading_acceleration_degrees_per_second: f64,
     speed_accuracy_knots: f64,
-    speed_diff_threshold_knots: f64,
-    speed_break_factor: f64,
     max_delta_speed_knots_per_second: f64,
     delta_speed_acceleration_knots_per_second: f64,
     altitude_accuracy_feet: f64,
-    altitude_diff_threshold_feet: f64,
-    altitude_change_break_factor: f64,
     max_delta_altitude_feet_per_second: f64,
 }
 
@@ -353,18 +351,12 @@ impl Default for GameVariables {
     fn default() -> Self {
         Self {
             heading_accuracy_degrees: 0.001,
-            heading_diff_break_threshold_degrees: 10.0,
-            heading_break_factor: 0.99,
             max_delta_heading_degrees_per_second: 2.0,
             delta_heading_acceleration_degrees_per_second: 0.5,
             speed_accuracy_knots: 0.05,
-            speed_diff_threshold_knots: 1.0,
-            speed_break_factor: 4. / 5.,
             max_delta_speed_knots_per_second: 1.,
             delta_speed_acceleration_knots_per_second: 0.000005,
             altitude_accuracy_feet: 3.,
-            altitude_diff_threshold_feet: 300.,
-            altitude_change_break_factor: 4. / 5.,
             max_delta_altitude_feet_per_second: 100.0,
         }
     }
@@ -394,8 +386,6 @@ mod tests {
             delta_seconds: 0.02,
             required_change: 1.,
             accuracy: 0.1,
-            diff_threshold: 1.,
-            break_factor: 0.9,
             max_delta_val: 2.,
             delta_val_acceleration: 0.1,
             delta_val,
@@ -413,8 +403,6 @@ mod tests {
             delta_seconds: 0.02,
             required_change: 0.9,
             accuracy: 0.1,
-            diff_threshold: 1.,
-            break_factor: 0.9,
             max_delta_val: 2.,
             delta_val_acceleration: 0.1,
             delta_val,
