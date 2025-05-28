@@ -311,7 +311,7 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     // required breaking distance
     // f1_int(x) = (-+)delta_val_acceleration/2 * x^2 + delta_val * x
     // f1_int(x1)
-    let braking_distance = 0.5
+    let braking_distance = -0.5
         * direction_to_target
         * delta_val_acceleration_u_per_second2
         * braking_time
