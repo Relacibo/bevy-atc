@@ -176,7 +176,7 @@ fn update_aircrafts(
         if *heading_change_degrees_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change_u,
+                val_remaining_u: required_change_u,
                 accuracy_u: heading_accuracy_degrees,
                 max_delta_val_u_per_second: max_delta_heading_degrees_per_second,
                 delta_val_acceleration_u_per_second2: delta_heading_acceleration_degrees_per_second,
@@ -212,7 +212,7 @@ fn update_aircrafts(
         if required_change_u != 0. || *acceleration_knots_per_second != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change_u,
+                val_remaining_u: required_change_u,
                 accuracy_u: speed_accuracy_knots,
                 max_delta_val_u_per_second: max_delta_speed_knots_per_second,
                 delta_val_acceleration_u_per_second2: delta_speed_acceleration_knots_per_second,
@@ -244,7 +244,7 @@ fn update_aircrafts(
         if *altitude_change_feet_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change_u,
+                val_remaining_u: required_change_u,
                 accuracy_u: altitude_accuracy_feet,
                 max_delta_val_u_per_second: max_delta_altitude_feet_per_second,
                 delta_val_acceleration_u_per_second2: delta_altitude_acceleration_feet_per_second,
@@ -263,33 +263,39 @@ fn update_aircrafts(
 
 struct MoveSmoothParams<'a> {
     delta_seconds: f64,
-    required_change_u: f64,
     accuracy_u: f64,
     max_delta_val_u_per_second: f64,
     delta_val_acceleration_u_per_second2: f64,
     delta_val_u_per_second: &'a mut f64,
+    val_remaining_u: f64,
 }
 
 fn move_smooth(params: MoveSmoothParams) -> bool {
     let MoveSmoothParams {
         delta_seconds,
-        required_change_u,
         accuracy_u,
         max_delta_val_u_per_second,
         delta_val_acceleration_u_per_second2,
         delta_val_u_per_second,
+        val_remaining_u,
     } = params;
-    let required_change_abs = required_change_u.abs();
+    let required_change_abs = val_remaining_u.abs();
 
     if required_change_abs < accuracy_u {
         return true;
     }
 
-    let required_signum = required_change_u.signum();
+    let direction_to_target = val_remaining_u.signum();
+    let moving_direction = delta_val_u_per_second.signum();
     // If wrong direction: break
-    if required_signum != delta_val_u_per_second.signum() {
-        *delta_val_u_per_second +=
-            required_signum * (delta_seconds * delta_val_acceleration_u_per_second2);
+    if direction_to_target != moving_direction {
+        apply_acceleration(
+            direction_to_target,
+            delta_seconds,
+            delta_val_acceleration_u_per_second2,
+            max_delta_val_u_per_second,
+            delta_val_u_per_second,
+        );
         return false;
     }
 
@@ -300,29 +306,24 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     // solve: f(x1) = 0
     // x = -delta_val / (-+)delta_val_acceleration
     // x = (+-) (+-)|delta_val| / delta_val_acceleration [because delta_val.signum() == required_signum]
-    let x1 = delta_val_abs / delta_val_acceleration_u_per_second2;
+    let braking_time = delta_val_abs / delta_val_acceleration_u_per_second2;
 
     // required breaking distance
     // f1_int(x) = (-+)delta_val_acceleration/2 * x^2 + delta_val * x
     // f1_int(x1)
-    let breaking_distance = required_signum * delta_val_acceleration_u_per_second2 * x1 * x1 / 2.
-        + *delta_val_u_per_second * x1;
+    let braking_distance = 0.5
+        * direction_to_target
+        * delta_val_acceleration_u_per_second2
+        * braking_time
+        * braking_time
+        + *delta_val_u_per_second * braking_time;
 
-    let should_break = required_change_abs <= breaking_distance;
+    let should_brake = required_change_abs <= braking_distance;
 
-    if should_break {
+    if should_brake || delta_val_u_per_second.abs() < max_delta_val_u_per_second {
+        let accel_direction = if should_brake { -1.0 } else { 1.0 } * direction_to_target;
         apply_acceleration(
-            -required_signum,
-            delta_seconds,
-            delta_val_acceleration_u_per_second2,
-            max_delta_val_u_per_second,
-            delta_val_u_per_second,
-        );
-        return (required_change_u - *delta_val_u_per_second * delta_seconds).abs() < accuracy_u;
-    }
-    if required_signum * *delta_val_u_per_second < max_delta_val_u_per_second {
-        apply_acceleration(
-            required_signum,
+            accel_direction,
             delta_seconds,
             delta_val_acceleration_u_per_second2,
             max_delta_val_u_per_second,
@@ -416,7 +417,7 @@ mod tests {
         let delta_val = &mut 2.;
         let params = MoveSmoothParams {
             delta_seconds: 0.02,
-            required_change_u: 1.,
+            val_remaining_u: 1.,
             accuracy_u: 0.1,
             max_delta_val_u_per_second: 2.,
             delta_val_acceleration_u_per_second2: 0.1,
@@ -433,7 +434,7 @@ mod tests {
         let delta_val = &mut 2.;
         let params = MoveSmoothParams {
             delta_seconds: 0.02,
-            required_change_u: 0.9,
+            val_remaining_u: 0.9,
             accuracy_u: 0.1,
             max_delta_val_u_per_second: 2.,
             delta_val_acceleration_u_per_second2: 0.1,
