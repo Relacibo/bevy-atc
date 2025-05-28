@@ -94,14 +94,14 @@ fn spawn_aircraft(
                 call_sign: "Mayday321".to_owned(),
                 cleared_altitude_feet: None,
                 wanted_altitude_feet: 30000.,
-                cleared_heading: Some(40.0.into()),
+                cleared_heading: Some(200.0.into()),
                 cleared_speed_knots: None,
                 wanted_speed_knots: 350.,
             },
             AircraftPhysics {
                 heading: Heading::from(30.),
                 heading_change_degrees_per_second: 1.0,
-                speed_knots: 300.,
+                speed_knots: 200.,
                 acceleration_knots_per_second: 1.,
                 altitude_feet: 7000.,
                 altitude_change_feet_per_second: 10.,
@@ -171,16 +171,16 @@ fn update_aircrafts(
         let wanted = cleared_heading.unwrap_or(*heading);
         // FIXME: With heading, maybe not always correct, in proximity of
         // required_change = 180 degrees, moving away from wanted heading
-        let required_change = heading.required_change(wanted);
+        let required_change_u = heading.required_change(wanted);
 
-        if *heading_change_degrees_per_second != 0. || required_change != 0. {
+        if *heading_change_degrees_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change,
-                accuracy: heading_accuracy_degrees,
-                max_delta_val: max_delta_heading_degrees_per_second,
-                delta_val_acceleration: delta_heading_acceleration_degrees_per_second,
-                delta_val: heading_change_degrees_per_second,
+                required_change_u,
+                accuracy_u: heading_accuracy_degrees,
+                max_delta_val_u_per_second: max_delta_heading_degrees_per_second,
+                delta_val_acceleration_u_per_second2: delta_heading_acceleration_degrees_per_second,
+                delta_val_u_per_second: heading_change_degrees_per_second,
             };
             if move_smooth(params) {
                 *heading_change_degrees_per_second = 0.0;
@@ -208,22 +208,22 @@ fn update_aircrafts(
         // dbg!("Speed");
         // speed
         let wanted = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
-        let required_change = -*speed_knots + wanted;
-        if required_change != 0. || *acceleration_knots_per_second != 0. {
+        let required_change_u = -*speed_knots + wanted;
+        if required_change_u != 0. || *acceleration_knots_per_second != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change,
-                accuracy: speed_accuracy_knots,
-                max_delta_val: max_delta_speed_knots_per_second,
-                delta_val_acceleration: delta_speed_acceleration_knots_per_second,
-                delta_val: acceleration_knots_per_second,
+                required_change_u,
+                accuracy_u: speed_accuracy_knots,
+                max_delta_val_u_per_second: max_delta_speed_knots_per_second,
+                delta_val_acceleration_u_per_second2: delta_speed_acceleration_knots_per_second,
+                delta_val_u_per_second: acceleration_knots_per_second,
             };
             if move_smooth(params) {
                 *acceleration_knots_per_second = 0.0;
                 *speed_knots = wanted;
             }
         }
-        *speed_knots += *acceleration_knots_per_second;
+        *speed_knots += *acceleration_knots_per_second * delta_seconds;
 
         let (Vec3 { z, .. }, angle) = transform.rotation.to_axis_angle();
         let angle = z * angle;
@@ -240,22 +240,22 @@ fn update_aircrafts(
         // dbg!("Altitude");
 
         let wanted = cleared_altitude_feet.unwrap_or(*wanted_altitude_feet);
-        let required_change = -*altitude_feet + wanted;
-        if *altitude_change_feet_per_second != 0. || required_change != 0. {
+        let required_change_u = -*altitude_feet + wanted;
+        if *altitude_change_feet_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
-                required_change,
-                accuracy: altitude_accuracy_feet,
-                max_delta_val: max_delta_altitude_feet_per_second,
-                delta_val_acceleration: delta_altitude_acceleration_feet_per_second,
-                delta_val: altitude_change_feet_per_second,
+                required_change_u,
+                accuracy_u: altitude_accuracy_feet,
+                max_delta_val_u_per_second: max_delta_altitude_feet_per_second,
+                delta_val_acceleration_u_per_second2: delta_altitude_acceleration_feet_per_second,
+                delta_val_u_per_second: altitude_change_feet_per_second,
             };
             if move_smooth(params) {
                 *altitude_change_feet_per_second = 0.0;
                 *altitude_feet = wanted;
             }
         }
-        *altitude_feet += *altitude_change_feet_per_second;
+        *altitude_feet += *altitude_change_feet_per_second * delta_seconds;
 
         // dbg!("---------");
     }
@@ -263,63 +263,85 @@ fn update_aircrafts(
 
 struct MoveSmoothParams<'a> {
     delta_seconds: f64,
-    required_change: f64,
-    accuracy: f64,
-    max_delta_val: f64,
-    delta_val_acceleration: f64,
-    delta_val: &'a mut f64,
+    required_change_u: f64,
+    accuracy_u: f64,
+    max_delta_val_u_per_second: f64,
+    delta_val_acceleration_u_per_second2: f64,
+    delta_val_u_per_second: &'a mut f64,
 }
 
 fn move_smooth(params: MoveSmoothParams) -> bool {
     let MoveSmoothParams {
         delta_seconds,
-        required_change,
-        accuracy,
-        max_delta_val,
-        delta_val_acceleration,
-        delta_val,
+        required_change_u,
+        accuracy_u,
+        max_delta_val_u_per_second,
+        delta_val_acceleration_u_per_second2,
+        delta_val_u_per_second,
     } = params;
-    let required_change_abs = required_change.abs();
+    let required_change_abs = required_change_u.abs();
 
-    if required_change_abs < accuracy {
+    if required_change_abs < accuracy_u {
         return true;
     }
 
-    let required_signum = required_change.signum();
+    let required_signum = required_change_u.signum();
     // If wrong direction: break
-    if required_signum != delta_val.signum() {
-        *delta_val += required_signum * (delta_seconds * delta_val_acceleration);
+    if required_signum != delta_val_u_per_second.signum() {
+        *delta_val_u_per_second +=
+            required_signum * (delta_seconds * delta_val_acceleration_u_per_second2);
         return false;
     }
 
-    let delta_val_abs = delta_val.abs();
+    let delta_val_abs = delta_val_u_per_second.abs();
     // Required break time:
     // (+-) == required_signum
     // f(x) = (-+)delta_val_acceleration * x + delta_val
     // solve: f(x1) = 0
     // x = -delta_val / (-+)delta_val_acceleration
     // x = (+-) (+-)|delta_val| / delta_val_acceleration [because delta_val.signum() == required_signum]
-    let x1 = delta_val_abs / delta_val_acceleration;
+    let x1 = delta_val_abs / delta_val_acceleration_u_per_second2;
 
     // required breaking distance
     // f1_int(x) = (-+)delta_val_acceleration/2 * x^2 + delta_val * x
     // f1_int(x1)
-    let breaking_distance = required_signum * delta_val_acceleration * x1 * x1 / 2. + *delta_val * x1;
+    let breaking_distance = required_signum * delta_val_acceleration_u_per_second2 * x1 * x1 / 2.
+        + *delta_val_u_per_second * x1;
 
     let should_break = required_change_abs <= breaking_distance;
 
-    // dbg!(*delta_val);
-    // dbg!(required_change);
-    // dbg!(breaking_distance);
-    // dbg!(x1);
-    // dbg!(should_break);
-
-    if should_break || required_signum * *delta_val < max_delta_val {
-        let direction = if should_break { -1. } else { 1. };
-        *delta_val += direction * required_signum * (delta_seconds * delta_val_acceleration);
-        *delta_val = delta_val.clamp(-max_delta_val, max_delta_val);
+    if should_break {
+        apply_acceleration(
+            -required_signum,
+            delta_seconds,
+            delta_val_acceleration_u_per_second2,
+            max_delta_val_u_per_second,
+            delta_val_u_per_second,
+        );
+        return (required_change_u - *delta_val_u_per_second * delta_seconds).abs() < accuracy_u;
+    }
+    if required_signum * *delta_val_u_per_second < max_delta_val_u_per_second {
+        apply_acceleration(
+            required_signum,
+            delta_seconds,
+            delta_val_acceleration_u_per_second2,
+            max_delta_val_u_per_second,
+            delta_val_u_per_second,
+        );
     }
     false
+}
+
+fn apply_acceleration(
+    direction: f64,
+    delta_seconds: f64,
+    delta_val_acceleration_x_per_second2: f64,
+    max_delta_val_x_per_second: f64,
+    delta_val_x_per_second: &mut f64,
+) {
+    *delta_val_x_per_second += direction * (delta_seconds * delta_val_acceleration_x_per_second2);
+    *delta_val_x_per_second =
+        delta_val_x_per_second.clamp(-max_delta_val_x_per_second, max_delta_val_x_per_second);
 }
 
 fn handle_dev_gui_events(
@@ -394,11 +416,11 @@ mod tests {
         let delta_val = &mut 2.;
         let params = MoveSmoothParams {
             delta_seconds: 0.02,
-            required_change: 1.,
-            accuracy: 0.1,
-            max_delta_val: 2.,
-            delta_val_acceleration: 0.1,
-            delta_val,
+            required_change_u: 1.,
+            accuracy_u: 0.1,
+            max_delta_val_u_per_second: 2.,
+            delta_val_acceleration_u_per_second2: 0.1,
+            delta_val_u_per_second: delta_val,
         };
         let res = move_smooth(params);
         assert!(!res);
@@ -411,11 +433,11 @@ mod tests {
         let delta_val = &mut 2.;
         let params = MoveSmoothParams {
             delta_seconds: 0.02,
-            required_change: 0.9,
-            accuracy: 0.1,
-            max_delta_val: 2.,
-            delta_val_acceleration: 0.1,
-            delta_val,
+            required_change_u: 0.9,
+            accuracy_u: 0.1,
+            max_delta_val_u_per_second: 2.,
+            delta_val_acceleration_u_per_second2: 0.1,
+            delta_val_u_per_second: delta_val,
         };
         let res = move_smooth(params);
         assert!(!res);
