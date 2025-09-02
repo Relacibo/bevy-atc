@@ -6,7 +6,8 @@ use bevy::{
     prelude::*,
 };
 
-use crate::AppState;
+use crate::game::control::control_mode_is_normal;
+use crate::{AppState, game::run_conditions::was_mouse_wheel_used};
 
 static CAMERA_ZOOM_SPEED: f32 = 0.2;
 
@@ -21,20 +22,17 @@ impl Plugin for GameCameraPlugin {
                 move_camera.run_if(
                     input_pressed(MouseButton::Right).or(input_just_released(MouseButton::Right)),
                 ),
-                zoom_camera.run_if(was_mouse_wheel_used),
+                zoom_camera.run_if(control_mode_is_normal.and(was_mouse_wheel_used)),
             )
                 .run_if(in_state(AppState::Game)),
         );
     }
 }
 
-#[derive(Component, Default)]
-pub struct CameraScrollEnabled(pub bool);
-
 fn setup(mut commands: Commands, camera: Single<Entity, With<Camera2d>>) {
     commands
         .entity(*camera)
-        .insert((Transform::from_xyz(0., 0., 0.), CameraScrollEnabled(true)));
+        .insert(Transform::from_xyz(0., 0., 0.));
 }
 
 fn move_camera(
@@ -51,18 +49,10 @@ fn move_camera(
     transform.translation.y += factor * mouse_motion.delta.y;
 }
 
-fn was_mouse_wheel_used(mouse_wheel_input: Res<AccumulatedMouseScroll>) -> bool {
-    mouse_wheel_input.delta.y != 0.
-}
-
 fn zoom_camera(
-    scroll_enabled: Single<&CameraScrollEnabled, With<Camera2d>>,
     projection: Single<&mut Projection, With<Camera2d>>,
     mouse_wheel_input: Res<AccumulatedMouseScroll>,
 ) {
-    if !scroll_enabled.0 {
-        return;
-    }
     // https://bevyengine.org/examples/camera/projection-zoom/
     let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
         eprintln!("Wrong camera projection. Expected orthographic!");

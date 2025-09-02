@@ -1,12 +1,12 @@
-use std::{cell::OnceCell, env, sync::LazyLock};
+#![allow(clippy::type_complexity)]
+
+use std::{env, sync::LazyLock};
 
 use bevy::{
     DefaultPlugins,
     app::{App, AppExit},
-    dev_tools::DevToolsPlugin,
     prelude::*,
     window::WindowPlugin,
-    winit::WinitSettings,
 };
 
 use bevy_prng::WyRand;
@@ -17,8 +17,10 @@ use bevy_ui_text_input::TextInputPlugin;
 use dev_gui::DevGuiPlugin;
 use game::GamePlugin;
 use menu::MenuPlugin;
+
 mod dev_gui;
 mod game;
+// mod level_select_menu;
 mod menu;
 mod util;
 
@@ -39,6 +41,7 @@ impl AppConfig {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, States)]
 pub enum AppState {
     Menu,
+    LevelSelect,
     Game,
 }
 

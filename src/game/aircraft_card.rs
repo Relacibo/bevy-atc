@@ -4,9 +4,15 @@ use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use strum::{EnumIter, IntoEnumIterator};
 
-use super::GameState;
-use super::camera::CameraScrollEnabled;
-use super::{AircraftJustSpawned, aircraft::Aircraft, heading::Heading};
+use crate::game::AircraftJustSpawned;
+use crate::game::run_conditions::was_mouse_wheel_used;
+
+use super::aircraft::Aircraft;
+use super::control::{
+    ControlMode, ControlState, control_mode_is_clearance_selection, control_mode_is_normal,
+};
+use super::heading::Heading;
+use super::{GameState, Z_AIRCRAFT_CARD};
 
 const AIRCRAFT_CARD_COLOR: Srgba = Srgba {
     red: 0.,
@@ -21,6 +27,13 @@ const SELECTED_AIRCRAFT_CARD_COLOR: Srgba = Srgba {
     alpha: 0.7,
 };
 
+const STEP_HEADING: f64 = 5.;
+const STEP_HEADING_ACCEL: f64 = 30.;
+const STEP_SPEED: f64 = 10.;
+const STEP_SPEED_ACCEL: f64 = 50.;
+const STEP_ALTITUDE: f64 = 500.;
+const STEP_ALTITUDE_ACCEL: f64 = 5000.;
+
 #[derive(Clone, Debug)]
 pub struct AircraftCardPlugin;
 
@@ -31,11 +44,16 @@ impl Plugin for AircraftCardPlugin {
             Update,
             (
                 handle_escape_clear_selected.run_if(input_just_pressed(KeyCode::Escape)),
-                handle_aircraft_card_display_press,
-                handle_card_scroll,
+                handle_clear_selected_on_any_click,
                 update_aircraft_card,
                 handle_aircraft_just_spawned,
                 update_pinned,
+                (
+                    handle_aircraft_card_display_press.run_if(control_mode_is_normal),
+                    handle_card_scroll
+                        .run_if(control_mode_is_clearance_selection.and(was_mouse_wheel_used)),
+                )
+                    .after(handle_clear_selected_on_any_click),
             )
                 .run_if(in_state(GameState::Running)),
         );
@@ -151,30 +169,27 @@ pub fn handle_aircraft_just_spawned(
         let mut children = Vec::new();
         for (index, display) in AircraftCardDisplay::iter().enumerate() {
             let mesh = meshes.add(Rectangle::new(60.0, 12.0));
-            let text_entity = commands
-                .spawn((
-                    Text2d::default(),
-                    TextLayout::new_with_justify(JustifyText::Justified),
-                    TextFont::from_font_size(100.),
-                    Transform::from_xyz(0., 0., 0.).with_scale(Vec3 {
-                        x: 0.1,
-                        y: 0.1,
-                        z: 1.,
-                    }),
-                    Visibility::Inherited,
-                ))
-                .id();
             let child_entity = commands
                 .spawn((
                     display,
                     Pickable::default(),
                     Mesh2d(mesh),
                     MeshMaterial2d(card_materials.normal.clone()),
-                    Transform::from_xyz(0., 40. - index as f32 * 12., 1.),
+                    Transform::from_xyz(0., 40. - index as f32 * 12., 0.5),
                     Visibility::Inherited,
+                    children![(
+                        Text2d::default(),
+                        TextLayout::new_with_justify(JustifyText::Justified),
+                        TextFont::from_font_size(100.),
+                        Transform::from_xyz(0., 0., 0.5).with_scale(Vec3 {
+                            x: 0.1,
+                            y: 0.1,
+                            z: 1.,
+                        }),
+                        Visibility::Inherited,
+                    )],
                 ))
                 .id();
-            commands.entity(child_entity).add_child(text_entity);
             children.push(child_entity);
         }
         let relative_translation = Vec3::new(-100., 0., 0.);
@@ -188,37 +203,32 @@ pub fn handle_aircraft_just_spawned(
                 half_size: Vec2::new(60., 60.),
             })),
             MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_CARD_COLOR))),
-            Transform::from_xyz(0., 0., 0.0), // z = 0.0 für Hintergrund
+            Transform::from_xyz(0., 0., Z_AIRCRAFT_CARD),
             Visibility::Visible,
         ));
         entity.add_children(&children);
     }
 }
 
-#[derive(Resource)]
-pub struct SelectedAircraftCardDisplay {
-    pub aircraft_entity: Entity,
-    pub display_entity: Entity,
-    pub display: AircraftCardDisplay,
-}
+// Entferne die Resource SelectedAircraftCardDisplay und die Komponente CameraScrollEnabled
+// Passe die Auswahl- und Scroll-Logik auf ControlState/ControlMode an
 
+// Auswahl-System: Setzt ControlMode::ClearanceSelection
 #[allow(clippy::too_many_arguments)]
 pub fn handle_aircraft_card_display_press(
     mut events: EventReader<Pointer<Pressed>>,
     q_card_display: Query<(Entity, &AircraftCardDisplay, &ChildOf)>,
-    q_card: Query<&PinnedTo, With<AircraftCard>>,
+    q_card: Query<&PinnedTo, With<AircraftCard>>, // für Aircraft-Entity
+    mut q_aircraft: Query<&mut Aircraft>,         // für Clearance-Entfernung
     mut q_display: Query<(&AircraftCardDisplay, &mut MeshMaterial2d<ColorMaterial>)>,
     card_materials: Res<AircraftCardDisplayMaterials>,
-    selected_aircraft_card_display: Option<Res<SelectedAircraftCardDisplay>>,
-    mut commands: Commands,
-    mut q_camera: Single<&mut CameraScrollEnabled, With<Camera2d>>,
+    mut control_state: ResMut<ControlState>,
 ) {
     for event in events.read() {
         let Ok((display_entity, display, ChildOf(card_entity))) = q_card_display.get(event.target)
         else {
             continue;
         };
-        println!("Es wurde ein display gedrückt! {display:?}");
         let Ok(PinnedTo {
             entity: aircraft_entity,
             ..
@@ -226,87 +236,124 @@ pub fn handle_aircraft_card_display_press(
         else {
             continue;
         };
-        let old_display = selected_aircraft_card_display
-            .as_ref()
-            .map(|s| s.display_entity);
-        // Kamera-Scroll deaktivieren
-        q_camera.0 = false;
-        commands.insert_resource(SelectedAircraftCardDisplay {
+        // Rechtsklick: Clearance entfernen
+        if event.button == PointerButton::Secondary {
+            if let Ok(mut aircraft) = q_aircraft.get_mut(*aircraft_entity) {
+                match display {
+                    AircraftCardDisplay::ClearedHeading => aircraft.cleared_heading = None,
+                    AircraftCardDisplay::ClearedSpeed => aircraft.cleared_speed_knots = None,
+                    AircraftCardDisplay::ClearedAltitude => aircraft.cleared_altitude_feet = None,
+                    _ => {}
+                }
+            }
+            continue; // Keine Auswahl setzen
+        }
+        // Linksklick: Auswahl setzen
+        control_state.mode = ControlMode::ClearanceSelection {
             aircraft_entity: *aircraft_entity,
             display_entity,
             display: *display,
-        });
-
-        if let Some(old_display) = old_display {
-            if let Ok((_, mut display_material)) = q_display.get_mut(old_display) {
-                display_material.0 = card_materials.normal.clone();
-            }
-        }
+        };
         if let Ok((_, mut display_material)) = q_display.get_mut(display_entity) {
             display_material.0 = card_materials.selected.clone();
         }
     }
 }
 
-pub fn handle_card_scroll(
-    accumulated_mouse_scroll: Res<AccumulatedMouseScroll>,
-    selected: Option<Res<SelectedAircraftCardDisplay>>,
-    mut q_aircraft: Query<&mut Aircraft>,
+// Auswahl löschen bei Klick auf Hintergrund oder Escape
+pub fn handle_clear_selected_on_any_click(
+    mut events: EventReader<Pointer<Pressed>>,
+    mut q_display: Query<&mut MeshMaterial2d<ColorMaterial>>,
+    card_materials: Res<AircraftCardDisplayMaterials>,
+    mut control_state: ResMut<ControlState>,
 ) {
-    if accumulated_mouse_scroll.delta.y == 0. {
+    if events.is_empty() {
         return;
     }
-    let Some(selected) = selected else {
-        return;
-    };
-    let Ok(mut aircraft) = q_aircraft.get_mut(selected.aircraft_entity) else {
-        return;
-    };
+    events.clear();
+    if let ControlMode::ClearanceSelection { display_entity, .. } = &control_state.mode {
+        if let Ok(mut display_material) = q_display.get_mut(*display_entity) {
+            display_material.0 = card_materials.normal.clone();
+        }
+    }
+    control_state.mode = ControlMode::Normal;
+}
 
+pub fn handle_escape_clear_selected(
+    mut q_display: Query<&mut MeshMaterial2d<ColorMaterial>>,
+    card_materials: Res<AircraftCardDisplayMaterials>,
+    mut control_state: ResMut<ControlState>,
+) {
+    if let ControlMode::ClearanceSelection { display_entity, .. } = &control_state.mode {
+        if let Ok(mut display_material) = q_display.get_mut(*display_entity) {
+            display_material.0 = card_materials.normal.clone();
+        }
+    }
+    control_state.mode = ControlMode::Normal;
+}
+
+// Scroll-System: Greift auf ControlMode::ClearanceSelection zu
+pub fn handle_card_scroll(
+    accumulated_mouse_scroll: Res<AccumulatedMouseScroll>,
+    control_state: Res<ControlState>,
+    mut q_aircraft: Query<&mut Aircraft>,
+    input: Res<ButtonInput<KeyCode>>,
+) {
+    let ControlMode::ClearanceSelection {
+        aircraft_entity,
+        display,
+        ..
+    } = &control_state.mode
+    else {
+        return;
+    };
+    let Ok(mut aircraft) = q_aircraft.get_mut(*aircraft_entity) else {
+        return;
+    };
     let delta: f64 = if accumulated_mouse_scroll.unit == MouseScrollUnit::Line {
         accumulated_mouse_scroll.delta.y as f64
     } else {
         (accumulated_mouse_scroll.delta.y / 100.).round() as f64
     };
-    match selected.display {
+    let ctrl = input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight);
+    match display {
         AircraftCardDisplay::ClearedHeading => {
-            const STEP: f64 = 5.;
-            if let Some(ref mut heading) = aircraft.cleared_heading {
-                *heading = heading.change(delta * STEP);
+            let step = if ctrl {
+                STEP_HEADING_ACCEL
             } else {
-                let base = if delta < 0.0 {
-                    (aircraft.heading.get() / STEP).floor() * STEP
-                } else {
-                    (aircraft.heading.get() / STEP).ceil() * STEP
-                };
-                aircraft.cleared_heading = Some(Heading::from(base));
-            }
+                STEP_HEADING
+            };
+            let new_val = calculate_cleared_value(
+                aircraft.heading.get(),
+                aircraft.cleared_heading.map(|h| h.get()),
+                delta,
+                step,
+            );
+            aircraft.cleared_heading = Some(Heading::from(new_val));
         }
         AircraftCardDisplay::ClearedSpeed => {
-            const STEP: f64 = 10.;
-            if let Some(ref mut speed) = aircraft.cleared_speed_knots {
-                *speed += delta * STEP;
-            } else {
-                let base = if delta < 0.0 {
-                    (aircraft.speed_knots / STEP).floor() * STEP
-                } else {
-                    (aircraft.speed_knots / STEP).ceil() * STEP
-                };
-                aircraft.cleared_speed_knots = Some(base);
-            }
+            let step = if ctrl { STEP_SPEED_ACCEL } else { STEP_SPEED };
+            let new_val = calculate_cleared_value(
+                aircraft.speed_knots,
+                aircraft.cleared_speed_knots,
+                delta,
+                step,
+            );
+            aircraft.cleared_speed_knots = Some(new_val);
         }
         AircraftCardDisplay::ClearedAltitude => {
-            const STEP: f64 = 500.0;
-            if let Some(ref mut alt) = aircraft.cleared_altitude_feet {
-                *alt += delta * STEP;
+            let step = if ctrl {
+                STEP_ALTITUDE_ACCEL
             } else {
-                let base = if delta < 0.0 {
-                    (aircraft.altitude_feet / STEP).floor() * STEP
-                } else {
-                    (aircraft.altitude_feet / STEP).ceil() * STEP
-                };
-                aircraft.cleared_altitude_feet = Some(base);
-            }
+                STEP_ALTITUDE
+            };
+            let new_val = calculate_cleared_value(
+                aircraft.altitude_feet,
+                aircraft.cleared_altitude_feet,
+                delta,
+                step,
+            );
+            aircraft.cleared_altitude_feet = Some(new_val);
         }
         _ => {}
     }
@@ -334,20 +381,18 @@ pub fn update_pinned(
         pinned_by_transform.translation = target_translation + relative_translation;
     }
 }
-pub fn handle_escape_clear_selected(
-    mut q_display: Query<&mut MeshMaterial2d<ColorMaterial>>,
-    card_materials: Res<AircraftCardDisplayMaterials>,
-    selected_aircraft_card_display: Option<Res<SelectedAircraftCardDisplay>>,
-    mut commands: Commands,
-    mut q_camera: Single<&mut CameraScrollEnabled, With<Camera2d>>,
-) {
-    let Some(selected) = selected_aircraft_card_display else {
-        return;
+
+fn calculate_cleared_value(current: f64, cleared: Option<f64>, delta: f64, step: f64) -> f64 {
+    let base = cleared.unwrap_or(current);
+    let idx = base / step;
+    let is_on_grid = (base % step).abs() == 0.;
+    let go_downwards = delta < 0.0;
+
+    let new_idx = match (is_on_grid, go_downwards) {
+        (true, true) => idx - 1.0,
+        (true, false) => idx + 1.0,
+        (false, true) => idx.floor(),
+        (false, false) => idx.ceil(),
     };
-    let SelectedAircraftCardDisplay { display_entity, .. } = *selected;
-    commands.remove_resource::<SelectedAircraftCardDisplay>();
-    if let Ok(mut display_material) = q_display.get_mut(display_entity) {
-        display_material.0 = card_materials.normal.clone();
-    }
-    q_camera.0 = true;
+    new_idx * step
 }

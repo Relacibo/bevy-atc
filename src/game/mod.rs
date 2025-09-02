@@ -10,6 +10,7 @@ use std::{
 use aircraft::Aircraft;
 use aircraft_card::AircraftCardPlugin;
 use anyhow::anyhow;
+use bevy::window::PrimaryWindow;
 use bevy::{
     input::{
         common_conditions::{input_just_pressed, input_just_released, input_pressed},
@@ -20,47 +21,69 @@ use bevy::{
     },
     prelude::*,
 };
+use bevy_common_assets::ron::RonAssetPlugin;
 use bevy_prng::WyRand;
 use bevy_rand::global::GlobalEntropy;
 use camera::GameCameraPlugin;
 use heading::Heading;
 use rand_core::RngCore;
+use serde::Deserialize;
 
 pub struct GamePlugin;
 
 use crate::{
     APP_CONFIG, AppState,
     dev_gui::{DevGuiInputEvent, DevGuiStructTrait, DevGuiVariableUpdatedEvent},
-    util::{
-        consts::{FIXED_UPDATE_LENGTH_SECOND, PIXEL_PER_KNOT_SECOND, PIXELS_PER_MILE},
-        entities::despawn_all,
-        reflect::try_apply_parsed,
-    },
+    game::control::ControlPlugin,
+    menu::LevelMeta,
+    util::{consts::PIXEL_PER_KNOT_SECOND, reflect::try_apply_parsed},
 };
 
 mod aircraft;
 mod aircraft_card;
 mod camera;
+mod control;
 mod heading;
+mod run_conditions;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
-pub enum GameState {
-    BeforeGame,
-    Running,
-}
+// Z-Index-Konstanten für die Spielobjekte
+pub const Z_BACKGROUND: f32 = 0.0;
+pub const Z_RUNWAY: f32 = 1.0;
+pub const Z_WAYPOINT: f32 = 4.0;
+pub const Z_AIRCRAFT: f32 = 8.0;
+pub const Z_AIRCRAFT_CARD: f32 = 10.0;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((GameCameraPlugin, AircraftCardPlugin, MeshPickingPlugin))
-            .register_type::<GameVariables>()
-            .insert_resource(GameVariables::default())
-            .add_event::<AircraftJustSpawned>()
-            .add_systems(OnEnter(AppState::Game), (setup, spawn_aircraft))
-            .add_systems(
-                FixedUpdate,
-                update_aircrafts.run_if(in_state(GameState::Running)),
-            )
-            .insert_state(GameState::BeforeGame);
+        app.add_plugins((
+            ControlPlugin,
+            GameCameraPlugin,
+            AircraftCardPlugin,
+            MeshPickingPlugin,
+            RonAssetPlugin::<LevelFile>::new(&["ron"]),
+        ))
+        .register_type::<GameVariables>()
+        .add_event::<AircraftJustSpawned>()
+        .add_systems(OnEnter(AppState::Game), enter_loading_state)
+        .add_systems(OnEnter(GameState::Loading), load_level_asset)
+        .add_systems(
+            Update,
+            poll_level_loaded.run_if(in_state(GameState::Loading)),
+        )
+        .add_systems(
+            OnEnter(GameState::Running),
+            (setup, spawn_aircraft, spawn_waypoints),
+        )
+        .add_systems(
+            FixedUpdate,
+            update_aircrafts.run_if(in_state(GameState::Running)),
+        )
+        .add_systems(
+            Update,
+            spawn_aircraft_at_mouse
+                .run_if(in_state(GameState::Running).and(input_just_pressed(KeyCode::KeyS))),
+        )
+        .insert_state(GameState::BeforeGame);
 
         if APP_CONFIG.dev_gui {
             app.add_systems(OnEnter(AppState::Game), setup_dev_gui)
@@ -69,6 +92,93 @@ impl Plugin for GamePlugin {
                     (handle_dev_gui_events).run_if(in_state(AppState::Game)),
                 );
         }
+    }
+}
+
+#[derive(Resource, Default)]
+struct PendingLevelHandle(Option<Handle<LevelFile>>);
+
+fn enter_loading_state(mut game_state: ResMut<NextState<GameState>>) {
+    game_state.set(GameState::Loading);
+}
+
+fn load_level_asset(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    game_vars: Res<GameVariables>,
+) {
+    let handle = asset_server.load::<LevelFile>(format!("levels/{}", &game_vars.level.file));
+    commands.insert_resource(PendingLevelHandle(Some(handle)));
+}
+
+fn poll_level_loaded(
+    mut game_state: ResMut<NextState<GameState>>,
+    pending: Res<PendingLevelHandle>,
+    level_assets: Res<Assets<LevelFile>>,
+) {
+    let Some(handle) = pending.0.as_ref() else {
+        return;
+    };
+    let Some(_level) = level_assets.get(handle) else {
+        return;
+    };
+    game_state.set(GameState::Running);
+}
+
+fn spawn_waypoints(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    pending: Res<PendingLevelHandle>,
+    level_assets: Res<Assets<LevelFile>>,
+) {
+    let Some(handle) = pending.0.as_ref() else {
+        return;
+    };
+    let Some(level) = level_assets.get(handle) else {
+        return;
+    };
+    for wp in &level.waypoints {
+        commands.spawn((
+            Waypoint {
+                name: wp.name.clone(),
+            },
+            Mesh2d(meshes.add(Circle { radius: 10.0 })),
+            MeshMaterial2d(materials.add(Color::srgb(0.5, 0.5, 0.5))),
+            Transform::from_xyz(wp.pos.x, wp.pos.y, Z_WAYPOINT),
+            Name::new(wp.name.clone()),
+            children![(
+                Text2d(wp.name.clone()),
+                TextFont::from_font_size(32.0),
+                Transform::from_xyz(16.0, 16.0, 0.1).with_scale(Vec3 {
+                    x: 1.0,
+                    y: 1.0,
+                    z: 1.0,
+                },),
+                Visibility::Inherited,
+            )],
+        ));
+    }
+
+    // Spawn runways
+    for rw in &level.runways {
+        let dir = rw.end - rw.start;
+        let length = dir.length();
+        let angle = -dir.angle_to(Vec2::X);
+        commands.spawn((
+            Mesh2d(meshes.add(Rectangle {
+                half_size: Vec2::new(length / 2.0, 5.0),
+            })),
+            MeshMaterial2d(materials.add(Color::srgb(0.3, 0.3, 0.3))),
+            Transform::from_xyz(
+                (rw.start.x + rw.end.x) / 2.0,
+                (rw.start.y + rw.end.y) / 2.0,
+                Z_RUNWAY,
+            )
+            .with_rotation(Quat::from_rotation_z(angle)),
+            Name::new(format!("Runway {}", rw.name)),
+            Visibility::Visible,
+        ));
     }
 }
 
@@ -108,14 +218,14 @@ fn spawn_aircraft(
                 half_size: Vec2::new(5., 5.),
             })),
             MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-            Transform::from_xyz(0., 0., 10.),
+            Transform::from_xyz(0., 0., Z_AIRCRAFT),
             children![(
                 Mesh2d(meshes.add(Rectangle {
                     half_size: Vec2::new(20., 1.),
                 })),
                 MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-                Transform::from_xyz(20., 0., 11.),
-            )],
+                Transform::from_xyz(20., 0., 0.5),
+            ),],
         ))
         .id();
     writer.write(AircraftJustSpawned(entity));
@@ -142,6 +252,7 @@ fn update_aircrafts(
         altitude_accuracy_feet,
         max_delta_altitude_feet_per_second,
         delta_altitude_acceleration_feet_per_second,
+        ..
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
     for (aircraft, mut transform) in query {
@@ -360,23 +471,25 @@ fn handle_dev_gui_events(
 }
 
 #[derive(Debug, Clone, Resource, Reflect)]
-struct GameVariables {
-    heading_accuracy_degrees: f64,
-    max_delta_heading_degrees_per_second: f64,
-    delta_heading_acceleration_degrees_per_second: f64,
-    speed_accuracy_knots: f64,
-    max_delta_speed_knots_per_second: f64,
-    delta_speed_acceleration_knots_per_second: f64,
-    altitude_accuracy_feet: f64,
-    max_delta_altitude_feet_per_second: f64,
-    delta_altitude_acceleration_feet_per_second: f64,
+pub struct GameVariables {
+    pub level: LevelMeta,
+    pub heading_accuracy_degrees: f64,
+    pub max_delta_heading_degrees_per_second: f64,
+    pub delta_heading_acceleration_degrees_per_second: f64,
+    pub speed_accuracy_knots: f64,
+    pub max_delta_speed_knots_per_second: f64,
+    pub delta_speed_acceleration_knots_per_second: f64,
+    pub altitude_accuracy_feet: f64,
+    pub max_delta_altitude_feet_per_second: f64,
+    pub delta_altitude_acceleration_feet_per_second: f64,
 }
 
 impl DevGuiStructTrait for GameVariables {}
 
-impl Default for GameVariables {
-    fn default() -> Self {
+impl GameVariables {
+    pub fn new(level: LevelMeta) -> Self {
         Self {
+            level,
             heading_accuracy_degrees: 0.2,
             max_delta_heading_degrees_per_second: 2.0,
             delta_heading_acceleration_degrees_per_second: 0.1,
@@ -402,6 +515,60 @@ const AIRCRAFT_COLOR: Srgba = Srgba {
 
 #[derive(Clone, Debug, Event)]
 struct AircraftJustSpawned(Entity);
+
+fn spawn_aircraft_at_mouse(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    mut rng: GlobalEntropy<WyRand>,
+    mut writer: EventWriter<AircraftJustSpawned>,
+) {
+    let (camera, camera_transform) = &*camera;
+    let Some(screen_pos) = window.cursor_position() else {
+        return;
+    };
+    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) else {
+        return;
+    };
+    let call_signs = ["Alpha1", "Bravo2", "Charlie3", "Delta4", "Echo5"];
+    let idx = (rng.next_u32() as usize) % call_signs.len();
+    let call_sign = call_signs[idx].to_string();
+    let heading = (rng.next_u32() % 360) as f64;
+    let altitude_feet = 1000.0 + (rng.next_u32() % 39000) as f64;
+    let entity = commands
+        .spawn((
+            Aircraft {
+                call_sign,
+                cleared_altitude_feet: None,
+                wanted_altitude_feet: 30000.,
+                cleared_heading: Some(heading.into()),
+                cleared_speed_knots: None,
+                wanted_speed_knots: 350.,
+                heading: Heading::from(heading),
+                heading_change_degrees_per_second: 1.0,
+                speed_knots: 200.,
+                acceleration_knots_per_second: 1.,
+                altitude_feet,
+                altitude_change_feet_per_second: 10.,
+            },
+            Mesh2d(meshes.add(Rectangle {
+                half_size: Vec2::new(5., 5.),
+            })),
+            MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
+            Transform::from_xyz(world_pos.x, world_pos.y, Z_AIRCRAFT),
+            children![(
+                Mesh2d(meshes.add(Rectangle {
+                    half_size: Vec2::new(20., 1.),
+                })),
+                MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
+                Transform::from_xyz(20., 0., 0.5),
+            ),],
+        ))
+        .id();
+    writer.write(AircraftJustSpawned(entity));
+}
 
 #[cfg(test)]
 mod tests {
@@ -440,4 +607,35 @@ mod tests {
         dbg!(&delta_val);
         assert!(*delta_val < 2. && *delta_val > -2.);
     }
+}
+#[derive(Deserialize, Clone, Debug, Asset, Reflect)]
+pub struct LevelFile {
+    pub waypoints: Vec<WaypointData>,
+    pub runways: Vec<RunwayData>,
+}
+
+#[derive(Deserialize, Clone, Debug, Reflect)]
+pub struct WaypointData {
+    pub name: String,
+    pub pos: Vec2,
+}
+
+#[derive(Deserialize, Clone, Debug, Reflect)]
+pub struct RunwayData {
+    pub name: String,
+    pub start: Vec2,
+    pub end: Vec2,
+    pub elevation: f32,
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct Waypoint {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States)]
+pub enum GameState {
+    BeforeGame,
+    Loading,
+    Running,
 }

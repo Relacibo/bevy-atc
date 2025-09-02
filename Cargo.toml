@@ -14,6 +14,9 @@ bevy_ui_text_input = { git = "https://github.com/ickshonpe/bevy_ui_text_input.gi
 bevy_simple_scroll_view = "0.4"
 env_logger = "0.11"
 strum = { version = "0.27", features = ["derive"] }
+ron = "0.11.0"
+serde = { version = "1.0.219", features = ["derive"] }
+bevy_common_assets = { version = "0.13.0", features = ["ron"] }
 
 [target.'cfg(target_arch = "wasm32")']
 runner = "wasm-server-runner"
