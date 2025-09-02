@@ -1,6 +1,6 @@
 use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use bevy_simple_scroll_view::{ScrollView, ScrollableContent};
-use bevy_ui_text_input::{TextInputNode, TextInputPrompt, TextSubmissionEvent};
+use bevy_ui_text_input::{TextInputNode, TextInputPrompt, TextSubmitEvent};
 
 #[derive(Debug, Clone)]
 pub struct DevGuiPlugin;
@@ -172,10 +172,10 @@ pub fn handle_ui_events(
     mut dev_gui_event_writer: EventWriter<DevGuiVariableUpdatedEvent>,
     q_variable_input_containers: Query<&DevGuiVariableInputContainer>,
     q_variable_inputs: Query<&ChildOf, With<DevGuiVariableInput>>,
-    mut text_input_submit_event_reader: EventReader<TextSubmissionEvent>,
+    mut text_input_submit_event_reader: EventReader<TextSubmitEvent>,
 ) {
     for event in text_input_submit_event_reader.read() {
-        let TextSubmissionEvent { entity, text } = event;
+        let TextSubmitEvent { entity, text } = event;
         debug!("{entity}, {text}");
         let Ok(ChildOf(parent)) = q_variable_inputs.get(*entity) else {
             unreachable!()
@@ -228,7 +228,7 @@ fn create_variable_input(
                 },
                 TextInputNode {
                     clear_on_submit: false,
-                    mode: bevy_ui_text_input::TextInputMode::TextSingleLine,
+                    mode: bevy_ui_text_input::TextInputMode::SingleLine,
                     ..default()
                 },
                 TextInputPrompt {

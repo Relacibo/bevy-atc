@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use aircraft::{Aircraft, AircraftPhysics};
+use aircraft::Aircraft;
 use aircraft_card::AircraftCardPlugin;
 use anyhow::anyhow;
 use bevy::{
@@ -51,7 +51,7 @@ pub enum GameState {
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((GameCameraPlugin, AircraftCardPlugin))
+        app.add_plugins((GameCameraPlugin, AircraftCardPlugin, MeshPickingPlugin))
             .register_type::<GameVariables>()
             .insert_resource(GameVariables::default())
             .add_event::<AircraftJustSpawned>()
@@ -97,8 +97,6 @@ fn spawn_aircraft(
                 cleared_heading: Some(200.0.into()),
                 cleared_speed_knots: None,
                 wanted_speed_knots: 350.,
-            },
-            AircraftPhysics {
                 heading: Heading::from(30.),
                 heading_change_degrees_per_second: 1.0,
                 speed_knots: 200.,
@@ -130,7 +128,7 @@ fn setup_dev_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiIn
 }
 
 fn update_aircrafts(
-    query: Query<(&Aircraft, &mut AircraftPhysics, &mut Transform)>,
+    query: Query<(&mut Aircraft, &mut Transform)>,
     time: Res<Time>,
     game_variables: Res<GameVariables>,
 ) {
@@ -146,24 +144,21 @@ fn update_aircrafts(
         delta_altitude_acceleration_feet_per_second,
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
-    for (aircraft, physics, mut transform) in query {
+    for (aircraft, mut transform) in query {
         let Aircraft {
             cleared_altitude_feet,
             wanted_altitude_feet,
             cleared_heading,
             cleared_speed_knots,
             wanted_speed_knots,
-            ..
-        } = aircraft;
-
-        let AircraftPhysics {
             heading,
             heading_change_degrees_per_second,
             speed_knots,
             acceleration_knots_per_second,
             altitude_feet,
             altitude_change_feet_per_second,
-        } = physics.into_inner();
+            ..
+        } = aircraft.into_inner();
 
         // dbg!("Heading");
 

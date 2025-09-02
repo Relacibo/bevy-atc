@@ -10,10 +10,6 @@ pub struct Aircraft {
     pub cleared_heading: Option<Heading>,
     pub cleared_speed_knots: Option<f64>,
     pub wanted_speed_knots: f64,
-}
-
-#[derive(Clone, Debug, Component)]
-pub struct AircraftPhysics {
     pub altitude_feet: f64,
     pub altitude_change_feet_per_second: f64,
     pub heading: Heading,

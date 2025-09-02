@@ -28,10 +28,13 @@ impl Plugin for GameCameraPlugin {
     }
 }
 
+#[derive(Component, Default)]
+pub struct CameraScrollEnabled(pub bool);
+
 fn setup(mut commands: Commands, camera: Single<Entity, With<Camera2d>>) {
     commands
         .entity(*camera)
-        .insert(Transform::from_xyz(0., 0., 0.));
+        .insert((Transform::from_xyz(0., 0., 0.), CameraScrollEnabled(true)));
 }
 
 fn move_camera(
@@ -53,9 +56,13 @@ fn was_mouse_wheel_used(mouse_wheel_input: Res<AccumulatedMouseScroll>) -> bool 
 }
 
 fn zoom_camera(
+    scroll_enabled: Single<&CameraScrollEnabled, With<Camera2d>>,
     projection: Single<&mut Projection, With<Camera2d>>,
     mouse_wheel_input: Res<AccumulatedMouseScroll>,
 ) {
+    if !scroll_enabled.0 {
+        return;
+    }
     // https://bevyengine.org/examples/camera/projection-zoom/
     let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
         eprintln!("Wrong camera projection. Expected orthographic!");
