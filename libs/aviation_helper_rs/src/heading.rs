@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Sub},
 };
 
-use crate::util::conversions::{degrees_to_rotation, rotation_to_degrees};
+use crate::conversions::{degrees_to_rotation, rotation_to_degrees};
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct Heading(f64);
