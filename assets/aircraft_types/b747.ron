@@ -1,7 +1,7 @@
 AircraftType(
     id: "b747",
     name: "Boeing 747",
-    characteristics: ["heavy"],
+    characteristics: [Heavy],
     heading_accuracy_degrees: 0.15,
     max_delta_heading_degrees_per_second: 1.8,
     delta_heading_acceleration_degrees_per_second: 0.4,

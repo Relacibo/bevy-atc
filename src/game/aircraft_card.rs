@@ -15,14 +15,20 @@ use super::heading::Heading;
 use super::{GameState, Z_AIRCRAFT_CARD};
 
 const AIRCRAFT_CARD_COLOR: Srgba = Srgba {
-    red: 0.,
+    red: 0.1,
     green: 0.3,
     blue: 0.1,
-    alpha: 0.3,
+    alpha: 0.5,
+};
+const NORMAL_AIRCRAFT_CARD_COLOR: Srgba = Srgba {
+    red: 0.1,
+    green: 0.1,
+    blue: 0.1,
+    alpha: 0.7,
 };
 const SELECTED_AIRCRAFT_CARD_COLOR: Srgba = Srgba {
-    red: 0.8,
-    green: 0.8,
+    red: 0.5,
+    green: 0.5,
     blue: 0.1,
     alpha: 0.7,
 };
@@ -92,7 +98,7 @@ fn setup_aircraft_card_display_materials(
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let normal = materials.add(Color::srgba(0.0, 0.3, 0.1, 0.3));
+    let normal = materials.add(Color::Srgba(NORMAL_AIRCRAFT_CARD_COLOR));
     let selected = materials.add(Color::Srgba(SELECTED_AIRCRAFT_CARD_COLOR));
     commands.insert_resource(AircraftCardDisplayMaterials { normal, selected });
 }
@@ -125,9 +131,10 @@ pub fn update_aircraft_card(
                         AircraftCardDisplay::Callsign => aircraft.call_sign.clone(),
                         AircraftCardDisplay::ClearedHeading => aircraft
                             .cleared_heading
-                            .map(display_heading)
+                            .as_ref()
+                            .map(Heading::to_string)
                             .unwrap_or_default(),
-                        AircraftCardDisplay::Heading => display_heading(aircraft.heading),
+                        AircraftCardDisplay::Heading => Heading::to_string(&aircraft.heading),
                         AircraftCardDisplay::ClearedSpeed => aircraft
                             .cleared_speed_knots
                             .map(display_speed)
@@ -145,10 +152,6 @@ pub fn update_aircraft_card(
     }
 }
 
-fn display_heading(heading: Heading) -> String {
-    heading.get().floor().to_string()
-}
-
 fn display_speed(speed_knots: f64) -> String {
     speed_knots.floor().to_string()
 }
@@ -164,50 +167,84 @@ pub fn handle_aircraft_just_spawned(
     mut commands: Commands,
     card_materials: Res<AircraftCardDisplayMaterials>,
 ) {
+    use AircraftCardDisplay::*;
     for event in events.read() {
         let AircraftJustSpawned(aircraft_entity) = event;
         let mut children = Vec::new();
-        for (index, display) in AircraftCardDisplay::iter().enumerate() {
-            let mesh = meshes.add(Rectangle::new(60.0, 12.0));
-            let child_entity = commands
-                .spawn((
-                    display,
-                    Pickable::default(),
-                    Mesh2d(mesh),
-                    MeshMaterial2d(card_materials.normal.clone()),
-                    Transform::from_xyz(0., 40. - index as f32 * 12., 0.5),
-                    Visibility::Inherited,
-                    children![(
-                        Text2d::default(),
-                        TextLayout::new_with_justify(JustifyText::Justified),
-                        TextFont::from_font_size(100.),
-                        Transform::from_xyz(0., 0., 0.5).with_scale(Vec3 {
-                            x: 0.1,
-                            y: 0.1,
-                            z: 1.,
-                        }),
-                        Visibility::Inherited,
-                    )],
-                ))
-                .id();
+        let card_display = create_card_display_bundle(
+            Callsign,
+            meshes.add(Rectangle::new(71., 11.)),
+            card_materials.normal.clone(),
+            0.,
+            18.,
+            0.5,
+        );
+        let child_entity = commands.spawn(card_display).id();
+        children.push(child_entity);
+        let mesh = meshes.add(Rectangle::new(23.0, 11.0));
+        let display_coords = [
+            (ClearedHeading, -24., 6.),
+            (Heading, 0., 6.),
+            (ClearedSpeed, -24., -6.),
+            (Speed, 0., -6.),
+            (ClearedAltitude, -24., -18.),
+            (Altitude, 0., -18.),
+        ];
+        for (display, x, y) in display_coords {
+            let card_display = create_card_display_bundle(
+                display,
+                mesh.clone(),
+                card_materials.normal.clone(),
+                x,
+                y,
+                0.5,
+            );
+            let child_entity = commands.spawn(card_display).id();
             children.push(child_entity);
         }
-        let relative_translation = Vec3::new(-100., 0., 0.);
+        let relative_translation = Vec3::new(-80., 0., 0.);
         let mut entity = commands.spawn((
             AircraftCard,
             PinnedTo {
                 entity: *aircraft_entity,
                 relative_translation,
             },
-            Mesh2d(meshes.add(Rectangle {
-                half_size: Vec2::new(60., 60.),
-            })),
+            Mesh2d(meshes.add(Rectangle::new(74., 50.))),
             MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_CARD_COLOR))),
             Transform::from_xyz(0., 0., Z_AIRCRAFT_CARD),
             Visibility::Visible,
         ));
         entity.add_children(&children);
     }
+}
+
+fn create_card_display_bundle(
+    display: AircraftCardDisplay,
+    mesh: Handle<Mesh>,
+    card_material: Handle<ColorMaterial>,
+    x: f32,
+    y: f32,
+    z: f32,
+) -> impl Bundle {
+    (
+        display,
+        Pickable::default(),
+        Mesh2d(mesh),
+        MeshMaterial2d(card_material),
+        Transform::from_xyz(x, y, z),
+        Visibility::Inherited,
+        children![(
+            Text2d::default(),
+            TextLayout::new_with_justify(JustifyText::Justified),
+            TextFont::from_font_size(100.),
+            Transform::from_xyz(0., 0., 0.5).with_scale(Vec3 {
+                x: 0.1,
+                y: 0.1,
+                z: 1.,
+            }),
+            Visibility::Inherited,
+        )],
+    )
 }
 
 // Entferne die Resource SelectedAircraftCardDisplay und die Komponente CameraScrollEnabled

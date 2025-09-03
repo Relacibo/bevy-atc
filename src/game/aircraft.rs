@@ -42,7 +42,7 @@ pub struct AircraftType {
     pub id: String,
     pub name: String,
     #[serde(default)]
-    pub characteristics: Vec<String>,
+    pub characteristics: Vec<AircraftCharacteristic>,
     pub heading_accuracy_degrees: f64,
     pub max_delta_heading_degrees_per_second: f64,
     pub delta_heading_acceleration_degrees_per_second: f64,
@@ -53,4 +53,9 @@ pub struct AircraftType {
     pub max_delta_altitude_feet_per_second: f64,
     pub delta_altitude_acceleration_feet_per_second: f64,
     pub optimal_cruising_altitude_feet: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Reflect)]
+pub enum AircraftCharacteristic {
+    Heavy,
 }

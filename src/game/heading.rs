@@ -1,4 +1,7 @@
-use std::ops::{Add, Sub};
+use std::{
+    fmt::Display,
+    ops::{Add, Sub},
+};
 
 use crate::util::conversions::{degrees_to_rotation, rotation_to_degrees};
 
@@ -55,5 +58,15 @@ impl Heading {
 
     pub fn get(&self) -> f64 {
         self.0
+    }
+}
+
+impl Display for Heading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let num = match self.0.floor() {
+            0.0 => 360,
+            n => n as i32,
+        };
+        write!(f, "{num:03}")
     }
 }
