@@ -56,10 +56,4 @@ impl Heading {
     pub fn get(&self) -> f64 {
         self.0
     }
-
-    pub fn next_5_step(self, dir_signum: i64) -> Heading {
-        let Heading(heading) = self;
-        let dir = (dir_signum + 1) / 2;
-        Heading(((heading as i64 / 5 + dir) * 5).rem_euclid(360) as f64)
-    }
 }

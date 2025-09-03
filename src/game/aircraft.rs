@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::game::TurnDirection;
+
 use super::heading::Heading;
 
 #[derive(Clone, Debug, Component)]
@@ -8,6 +10,7 @@ pub struct Aircraft {
     pub cleared_altitude_feet: Option<f64>,
     pub wanted_altitude_feet: f64,
     pub cleared_heading: Option<Heading>,
+    pub cleared_heading_change_direction: Option<TurnDirection>,
     pub cleared_speed_knots: Option<f64>,
     pub wanted_speed_knots: f64,
     pub altitude_feet: f64,
