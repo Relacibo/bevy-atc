@@ -213,6 +213,7 @@ fn spawn_aircraft(
                 acceleration_knots_per_second: 1.,
                 altitude_feet: 7000.,
                 altitude_change_feet_per_second: 10.,
+                cleared_heading_change_direction: None,
             },
             Mesh2d(meshes.add(Rectangle {
                 half_size: Vec2::new(5., 5.),
@@ -255,7 +256,7 @@ fn update_aircrafts(
         ..
     } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
-    for (aircraft, mut transform) in query {
+    for (mut aircraft, mut transform) in query {
         let Aircraft {
             cleared_altitude_feet,
             wanted_altitude_feet,
@@ -268,8 +269,9 @@ fn update_aircrafts(
             acceleration_knots_per_second,
             altitude_feet,
             altitude_change_feet_per_second,
+            cleared_heading_change_direction,
             ..
-        } = aircraft.into_inner();
+        } = &mut *aircraft;
 
         // dbg!("Heading");
 
@@ -277,7 +279,8 @@ fn update_aircrafts(
         let wanted = cleared_heading.unwrap_or(*heading);
         // FIXME: With heading, maybe not always correct, in proximity of
         // required_change = 180 degrees, moving away from wanted heading
-        let required_change_u = heading.required_change(wanted);
+        let required_change_u =
+            required_heading_change(*heading, wanted, *cleared_heading_change_direction);
 
         if *heading_change_degrees_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
@@ -286,10 +289,14 @@ fn update_aircrafts(
                 accuracy_u: heading_accuracy_degrees,
                 max_delta_val_u_per_second: max_delta_heading_degrees_per_second,
                 delta_val_acceleration_u_per_second2: delta_heading_acceleration_degrees_per_second,
-                delta_val_u_per_second: heading_change_degrees_per_second,
+                delta_val_u_per_second: *heading_change_degrees_per_second,
             };
-            if move_smooth(params) {
-                *heading_change_degrees_per_second = 0.0;
+            let MoveSmoothReturn {
+                finished_moving,
+                delta_val_u_per_second,
+            } = move_smooth(params);
+            *heading_change_degrees_per_second = delta_val_u_per_second;
+            if finished_moving {
                 *heading = wanted;
                 transform.rotation = Quat::from_axis_angle(
                     Vec3 {
@@ -322,10 +329,14 @@ fn update_aircrafts(
                 accuracy_u: speed_accuracy_knots,
                 max_delta_val_u_per_second: max_delta_speed_knots_per_second,
                 delta_val_acceleration_u_per_second2: delta_speed_acceleration_knots_per_second,
-                delta_val_u_per_second: acceleration_knots_per_second,
+                delta_val_u_per_second: *acceleration_knots_per_second,
             };
-            if move_smooth(params) {
-                *acceleration_knots_per_second = 0.0;
+            let MoveSmoothReturn {
+                finished_moving,
+                delta_val_u_per_second,
+            } = move_smooth(params);
+            *acceleration_knots_per_second = delta_val_u_per_second;
+            if finished_moving {
                 *speed_knots = wanted;
             }
         }
@@ -354,10 +365,14 @@ fn update_aircrafts(
                 accuracy_u: altitude_accuracy_feet,
                 max_delta_val_u_per_second: max_delta_altitude_feet_per_second,
                 delta_val_acceleration_u_per_second2: delta_altitude_acceleration_feet_per_second,
-                delta_val_u_per_second: altitude_change_feet_per_second,
+                delta_val_u_per_second: *altitude_change_feet_per_second,
             };
-            if move_smooth(params) {
-                *altitude_change_feet_per_second = 0.0;
+            let MoveSmoothReturn {
+                finished_moving,
+                delta_val_u_per_second,
+            } = move_smooth(params);
+            *altitude_change_feet_per_second = delta_val_u_per_second;
+            if finished_moving {
                 *altitude_feet = wanted;
             }
         }
@@ -367,16 +382,38 @@ fn update_aircrafts(
     }
 }
 
-struct MoveSmoothParams<'a> {
+fn required_heading_change(
+    current: Heading,
+    wanted: Heading,
+    cleared_direction: Option<TurnDirection>,
+) -> f64 {
+    let delta = current.required_change(wanted);
+    if let Some(dir) = cleared_direction {
+        match dir {
+            TurnDirection::Left if delta > 0.0 => delta - 360.,
+            TurnDirection::Right if delta < 0.0 => delta + 360.,
+            _ => delta,
+        }
+    } else {
+        delta
+    }
+}
+
+struct MoveSmoothParams {
     delta_seconds: f64,
     accuracy_u: f64,
     max_delta_val_u_per_second: f64,
     delta_val_acceleration_u_per_second2: f64,
-    delta_val_u_per_second: &'a mut f64,
+    delta_val_u_per_second: f64,
     val_remaining_u: f64,
 }
 
-fn move_smooth(params: MoveSmoothParams) -> bool {
+struct MoveSmoothReturn {
+    delta_val_u_per_second: f64,
+    finished_moving: bool,
+}
+
+fn move_smooth(params: MoveSmoothParams) -> MoveSmoothReturn {
     let MoveSmoothParams {
         delta_seconds,
         accuracy_u,
@@ -388,21 +425,27 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
     let required_change_abs = val_remaining_u.abs();
 
     if required_change_abs < accuracy_u {
-        return true;
+        return MoveSmoothReturn {
+            finished_moving: true,
+            delta_val_u_per_second: 0.,
+        };
     }
 
     let direction_to_target = val_remaining_u.signum();
     let moving_direction = delta_val_u_per_second.signum();
     // If wrong direction: break
     if direction_to_target != moving_direction {
-        apply_acceleration(
+        let delta_val_x_per_second_new = apply_acceleration(
             direction_to_target,
             delta_seconds,
             delta_val_acceleration_u_per_second2,
             max_delta_val_u_per_second,
             delta_val_u_per_second,
         );
-        return false;
+        return MoveSmoothReturn {
+            delta_val_u_per_second: delta_val_x_per_second_new,
+            finished_moving: false,
+        };
     }
 
     let delta_val_abs = delta_val_u_per_second.abs();
@@ -422,21 +465,26 @@ fn move_smooth(params: MoveSmoothParams) -> bool {
         * delta_val_acceleration_u_per_second2
         * braking_time
         * braking_time
-        + *delta_val_u_per_second * braking_time;
+        + delta_val_u_per_second * braking_time;
 
     let should_brake = required_change_abs <= braking_distance;
-
-    if should_brake || delta_val_u_per_second.abs() < max_delta_val_u_per_second {
-        let accel_direction = if should_brake { -1.0 } else { 1.0 } * direction_to_target;
-        apply_acceleration(
-            accel_direction,
-            delta_seconds,
-            delta_val_acceleration_u_per_second2,
-            max_delta_val_u_per_second,
-            delta_val_u_per_second,
-        );
+    let delta_val_x_per_second_new =
+        if should_brake || delta_val_u_per_second.abs() < max_delta_val_u_per_second {
+            let accel_direction = if should_brake { -1.0 } else { 1.0 } * direction_to_target;
+            apply_acceleration(
+                accel_direction,
+                delta_seconds,
+                delta_val_acceleration_u_per_second2,
+                max_delta_val_u_per_second,
+                delta_val_u_per_second,
+            )
+        } else {
+            delta_val_u_per_second
+        };
+    MoveSmoothReturn {
+        delta_val_u_per_second: delta_val_x_per_second_new,
+        finished_moving: false,
     }
-    false
 }
 
 fn apply_acceleration(
@@ -444,11 +492,13 @@ fn apply_acceleration(
     delta_seconds: f64,
     delta_val_acceleration_x_per_second2: f64,
     max_delta_val_x_per_second: f64,
-    delta_val_x_per_second: &mut f64,
-) {
-    *delta_val_x_per_second += direction * (delta_seconds * delta_val_acceleration_x_per_second2);
-    *delta_val_x_per_second =
-        delta_val_x_per_second.clamp(-max_delta_val_x_per_second, max_delta_val_x_per_second);
+    delta_val_x_per_second: f64,
+) -> f64 {
+    let mut delta_val_x_per_second_new =
+        delta_val_x_per_second + direction * (delta_seconds * delta_val_acceleration_x_per_second2);
+    delta_val_x_per_second_new =
+        delta_val_x_per_second_new.clamp(-max_delta_val_x_per_second, max_delta_val_x_per_second);
+    delta_val_x_per_second_new
 }
 
 fn handle_dev_gui_events(
@@ -552,6 +602,7 @@ fn spawn_aircraft_at_mouse(
                 acceleration_knots_per_second: 1.,
                 altitude_feet,
                 altitude_change_feet_per_second: 10.,
+                cleared_heading_change_direction: None,
             },
             Mesh2d(meshes.add(Rectangle {
                 half_size: Vec2::new(5., 5.),
@@ -570,44 +621,6 @@ fn spawn_aircraft_at_mouse(
     writer.write(AircraftJustSpawned(entity));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{MoveSmoothParams, move_smooth};
-
-    #[test]
-    fn test_move_ascend_over() {
-        let delta_val = &mut 2.;
-        let params = MoveSmoothParams {
-            delta_seconds: 0.02,
-            val_remaining_u: 1.,
-            accuracy_u: 0.1,
-            max_delta_val_u_per_second: 2.,
-            delta_val_acceleration_u_per_second2: 0.1,
-            delta_val_u_per_second: delta_val,
-        };
-        let res = move_smooth(params);
-        assert!(!res);
-        dbg!(&delta_val);
-        assert!(*delta_val < 2.);
-    }
-
-    #[test]
-    fn test_move_ascend_over_below_theshold() {
-        let delta_val = &mut 2.;
-        let params = MoveSmoothParams {
-            delta_seconds: 0.02,
-            val_remaining_u: 0.9,
-            accuracy_u: 0.1,
-            max_delta_val_u_per_second: 2.,
-            delta_val_acceleration_u_per_second2: 0.1,
-            delta_val_u_per_second: delta_val,
-        };
-        let res = move_smooth(params);
-        assert!(!res);
-        dbg!(&delta_val);
-        assert!(*delta_val < 2. && *delta_val > -2.);
-    }
-}
 #[derive(Deserialize, Clone, Debug, Asset, Reflect)]
 pub struct LevelFile {
     pub waypoints: Vec<WaypointData>,
@@ -638,4 +651,57 @@ pub enum GameState {
     BeforeGame,
     Loading,
     Running,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum TurnDirection {
+    Left,
+    Right,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game::MoveSmoothReturn;
+
+    use super::{MoveSmoothParams, move_smooth};
+
+    #[test]
+    fn test_move_ascend_over() {
+        let delta_val = &mut 2.;
+        let params = MoveSmoothParams {
+            delta_seconds: 0.02,
+            val_remaining_u: 1.,
+            accuracy_u: 0.1,
+            max_delta_val_u_per_second: 2.,
+            delta_val_acceleration_u_per_second2: 0.1,
+            delta_val_u_per_second: *delta_val,
+        };
+        let MoveSmoothReturn {
+            delta_val_u_per_second,
+            finished_moving,
+        } = move_smooth(params);
+        assert!(!finished_moving);
+        dbg!(delta_val_u_per_second);
+        assert!(delta_val_u_per_second < 2.);
+    }
+
+    #[test]
+    fn test_move_ascend_over_below_theshold() {
+        let delta_val = &mut 2.;
+        let params = MoveSmoothParams {
+            delta_seconds: 0.02,
+            val_remaining_u: 0.9,
+            accuracy_u: 0.1,
+            max_delta_val_u_per_second: 2.,
+            delta_val_acceleration_u_per_second2: 0.1,
+            delta_val_u_per_second: *delta_val,
+        };
+        let MoveSmoothReturn {
+            delta_val_u_per_second,
+            finished_moving,
+        } = move_smooth(params);
+        assert!(!finished_moving);
+        dbg!(delta_val_u_per_second);
+        assert!(delta_val_u_per_second < 2. && delta_val_u_per_second > -2.);
+    }
 }
