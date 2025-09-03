@@ -1,0 +1,14 @@
+AircraftType(
+    id: "cessna172",
+    name: "Cessna 172",
+    heading_accuracy_degrees: 0.5,
+    max_delta_heading_degrees_per_second: 3.0,
+    delta_heading_acceleration_degrees_per_second: 0.8,
+    speed_accuracy_knots: 0.5,
+    max_delta_speed_knots_per_second: 1.0,
+    delta_speed_acceleration_knots_per_second: 0.05,
+    altitude_accuracy_feet: 20.0,
+    max_delta_altitude_feet_per_second: 50.0,
+    delta_altitude_acceleration_feet_per_second: 2.0,
+    optimal_cruising_altitude_feet: 9000.0,
+)

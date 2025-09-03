@@ -3,10 +3,7 @@
 use std::{env, sync::LazyLock};
 
 use bevy::{
-    DefaultPlugins,
-    app::{App, AppExit},
-    prelude::*,
-    window::WindowPlugin,
+    app::{App, AppExit}, dev_tools::states::log_transitions, prelude::*, window::WindowPlugin, DefaultPlugins
 };
 
 use bevy_prng::WyRand;
@@ -29,12 +26,17 @@ pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(AppConfig::from_env);
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     dev_gui: bool,
+    log_state_transitions: bool,
 }
 
 impl AppConfig {
     fn from_env() -> Self {
         let dev_gui = env::var("DEV_GUI").as_deref() != Ok("0");
-        Self { dev_gui }
+        let log_state_transitions = env::var("LOG_STATE_TRANSITIONS").as_deref() == Ok("1");
+        Self {
+            dev_gui,
+            log_state_transitions,
+        }
     }
 }
 

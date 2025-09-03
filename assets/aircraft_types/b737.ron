@@ -1,0 +1,14 @@
+AircraftType(
+    id: "b737",
+    name: "Boeing 737",
+    heading_accuracy_degrees: 0.2,
+    max_delta_heading_degrees_per_second: 2.0,
+    delta_heading_acceleration_degrees_per_second: 0.5,
+    speed_accuracy_knots: 0.2,
+    max_delta_speed_knots_per_second: 2.0,
+    delta_speed_acceleration_knots_per_second: 0.1,
+    altitude_accuracy_feet: 10.0,
+    max_delta_altitude_feet_per_second: 100.0,
+    delta_altitude_acceleration_feet_per_second: 5.0,
+    optimal_cruising_altitude_feet: 36000.0,
+)

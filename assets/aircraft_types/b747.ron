@@ -1,0 +1,15 @@
+AircraftType(
+    id: "b747",
+    name: "Boeing 747",
+    characteristics: ["heavy"],
+    heading_accuracy_degrees: 0.15,
+    max_delta_heading_degrees_per_second: 1.8,
+    delta_heading_acceleration_degrees_per_second: 0.4,
+    speed_accuracy_knots: 0.2,
+    max_delta_speed_knots_per_second: 2.2,
+    delta_speed_acceleration_knots_per_second: 0.13,
+    altitude_accuracy_feet: 10.0,
+    max_delta_altitude_feet_per_second: 120.0,
+    delta_altitude_acceleration_feet_per_second: 6.0,
+    optimal_cruising_altitude_feet: 35000.0,
+)

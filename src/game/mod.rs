@@ -3,15 +3,20 @@
 
 use core::f64;
 use std::{
+    fs,
     ops::{Add, Sub},
+    path::Path,
     time::Duration,
 };
 
+use crate::game::aircraft::{AircraftType, AircraftTypeIndexFile};
 use aircraft::Aircraft;
 use aircraft_card::AircraftCardPlugin;
 use anyhow::anyhow;
+use bevy::platform::collections::hash_map::HashMap;
 use bevy::window::PrimaryWindow;
 use bevy::{
+    dev_tools::states::log_transitions,
     input::{
         common_conditions::{input_just_pressed, input_just_released, input_pressed},
         mouse::{
@@ -61,6 +66,8 @@ impl Plugin for GamePlugin {
             AircraftCardPlugin,
             MeshPickingPlugin,
             RonAssetPlugin::<LevelFile>::new(&["ron"]),
+            RonAssetPlugin::<AircraftTypeIndexFile>::new(&["ron"]),
+            RonAssetPlugin::<AircraftType>::new(&["ron"]),
         ))
         .register_type::<GameVariables>()
         .add_event::<AircraftJustSpawned>()
@@ -68,12 +75,11 @@ impl Plugin for GamePlugin {
         .add_systems(OnEnter(GameState::Loading), load_level_asset)
         .add_systems(
             Update,
-            poll_level_loaded.run_if(in_state(GameState::Loading)),
+            poll_handles_loaded.run_if(in_state(GameState::Loading)),
         )
-        .add_systems(
-            OnEnter(GameState::Running),
-            (setup, spawn_aircraft, spawn_waypoints),
-        )
+        .add_systems(OnEnter(LoadingState::SpawningLevel), spawn_level)
+        .add_systems(OnEnter(LoadingState::Finished), finish_loading)
+        .add_systems(OnEnter(GameState::Running), (setup, spawn_aircraft))
         .add_systems(
             FixedUpdate,
             update_aircrafts.run_if(in_state(GameState::Running)),
@@ -83,7 +89,8 @@ impl Plugin for GamePlugin {
             spawn_aircraft_at_mouse
                 .run_if(in_state(GameState::Running).and(input_just_pressed(KeyCode::KeyS))),
         )
-        .insert_state(GameState::BeforeGame);
+        .insert_state(GameState::BeforeGame)
+        .insert_state(LoadingState::LoadingHandles);
 
         if APP_CONFIG.dev_gui {
             app.add_systems(OnEnter(AppState::Game), setup_dev_gui)
@@ -92,51 +99,127 @@ impl Plugin for GamePlugin {
                     (handle_dev_gui_events).run_if(in_state(AppState::Game)),
                 );
         }
+
+        if APP_CONFIG.log_state_transitions {
+            app.add_systems(
+                Update,
+                (
+                    log_transitions::<GameState>,
+                    log_transitions::<LoadingState>,
+                ),
+            );
+        }
     }
 }
-
-#[derive(Resource, Default)]
-struct PendingLevelHandle(Option<Handle<LevelFile>>);
 
 fn enter_loading_state(mut game_state: ResMut<NextState<GameState>>) {
     game_state.set(GameState::Loading);
 }
+
+#[derive(Resource, Debug, Clone)]
+pub struct LevelHandle(pub Handle<LevelFile>);
 
 fn load_level_asset(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     game_vars: Res<GameVariables>,
 ) {
-    let handle = asset_server.load::<LevelFile>(format!("levels/{}", &game_vars.level.file));
-    commands.insert_resource(PendingLevelHandle(Some(handle)));
+    let level_handle = asset_server.load::<LevelFile>(format!("levels/{}", &game_vars.level.file));
+    let type_index_handle =
+        asset_server.load::<AircraftTypeIndexFile>("aircraft_types/index.ron");
+    commands.insert_resource(LevelHandle(level_handle.clone()));
+    commands.insert_resource(HandleLoadingState {
+        level: LevelLoadingState::PendingLevel(level_handle),
+        aircraft_types: AircraftTypesLoadingState::PendingIndex(type_index_handle),
+    });
+    commands.insert_resource(LoadingState::LoadingHandles);
 }
 
-fn poll_level_loaded(
-    mut game_state: ResMut<NextState<GameState>>,
-    pending: Res<PendingLevelHandle>,
+fn poll_handles_loaded(
+    mut commands: Commands,
+    handle_loading: Option<ResMut<HandleLoadingState>>,
+    mut next_loading_state: ResMut<NextState<LoadingState>>,
     level_assets: Res<Assets<LevelFile>>,
+    type_index_assets: Res<Assets<AircraftTypeIndexFile>>,
+    aircraft_type_assets: Res<Assets<AircraftType>>,
+    asset_server: Res<AssetServer>,
 ) {
-    let Some(handle) = pending.0.as_ref() else {
+    let Some(mut handle_loading) = handle_loading else {
         return;
     };
-    let Some(_level) = level_assets.get(handle) else {
-        return;
-    };
-    game_state.set(GameState::Running);
+    // Level
+    match &handle_loading.level {
+        LevelLoadingState::PendingLevel(handle) => {
+            if level_assets.get(handle).is_some() {
+                handle_loading.level = LevelLoadingState::Finished;
+            } else {
+                return;
+            }
+        }
+        LevelLoadingState::Finished => {}
+        _ => {}
+    }
+    // Aircraft Types
+    match &handle_loading.aircraft_types {
+        AircraftTypesLoadingState::PendingIndex(index_handle) => {
+            if let Some(index) = type_index_assets.get(index_handle) {
+                let type_handles: HashMap<_, _> = index
+                    .types
+                    .iter()
+                    .map(|meta| {
+                        (
+                            meta.id.clone(),
+                            asset_server
+                                .load::<AircraftType>(format!("aircraft_types/{}", meta.file)),
+                        )
+                    })
+                    .collect();
+                handle_loading.aircraft_types = AircraftTypesLoadingState::PendingAircraftTypes(
+                    type_handles.values().cloned().collect(),
+                );
+                commands.insert_resource(AircraftTypeStore(type_handles));
+            } else {
+                return;
+            }
+        }
+        AircraftTypesLoadingState::PendingAircraftTypes(handles) => {
+            let remaining: Vec<_> = handles
+                .iter()
+                .filter(|handle| aircraft_type_assets.get(*handle).is_none())
+                .cloned()
+                .collect();
+            if remaining.is_empty() {
+                handle_loading.aircraft_types = AircraftTypesLoadingState::Finished;
+            } else {
+                handle_loading.aircraft_types =
+                    AircraftTypesLoadingState::PendingAircraftTypes(remaining);
+                return;
+            }
+        }
+        AircraftTypesLoadingState::Finished => {}
+    }
+    // Wenn alles fertig ist, Stage wechseln
+    if matches!(handle_loading.level, LevelLoadingState::Finished)
+        && matches!(
+            handle_loading.aircraft_types,
+            AircraftTypesLoadingState::Finished
+        )
+    {
+        commands.remove_resource::<HandleLoadingState>();
+        next_loading_state.set(LoadingState::SpawningLevel);
+    }
 }
 
-fn spawn_waypoints(
+fn spawn_level(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    pending: Res<PendingLevelHandle>,
     level_assets: Res<Assets<LevelFile>>,
+    level_handle: Res<LevelHandle>,
+    mut next_loading_state: ResMut<NextState<LoadingState>>,
 ) {
-    let Some(handle) = pending.0.as_ref() else {
-        return;
-    };
-    let Some(level) = level_assets.get(handle) else {
-        return;
+    let Some(level) = level_assets.get(&level_handle.0) else {
+        unreachable!("Level asset not found!");
     };
     for wp in &level.waypoints {
         commands.spawn((
@@ -148,6 +231,7 @@ fn spawn_waypoints(
             Transform::from_xyz(wp.pos.x, wp.pos.y, Z_WAYPOINT),
             Name::new(wp.name.clone()),
             children![(
+
                 Text2d(wp.name.clone()),
                 TextFont::from_font_size(32.0),
                 Transform::from_xyz(16.0, 16.0, 0.1).with_scale(Vec3 {
@@ -180,6 +264,12 @@ fn spawn_waypoints(
             Visibility::Visible,
         ));
     }
+    commands.remove_resource::<LevelHandle>();
+    next_loading_state.set(LoadingState::Finished);
+}
+
+fn finish_loading(mut next_game_state: ResMut<NextState<GameState>>) {
+    next_game_state.set(GameState::Running);
 }
 
 fn setup(
@@ -201,6 +291,7 @@ fn spawn_aircraft(
     let entity = commands
         .spawn((
             Aircraft {
+                aircraft_type_id: "a320".to_owned(),
                 call_sign: "Mayday321".to_owned(),
                 cleared_altitude_feet: None,
                 wanted_altitude_feet: 30000.,
@@ -241,63 +332,55 @@ fn setup_dev_gui(variables: Res<GameVariables>, mut writer: EventWriter<DevGuiIn
 fn update_aircrafts(
     query: Query<(&mut Aircraft, &mut Transform)>,
     time: Res<Time>,
-    game_variables: Res<GameVariables>,
+    aircraft_types: Res<AircraftTypeStore>,
+    aircraft_type_assets: Res<Assets<AircraftType>>,
 ) {
-    let GameVariables {
-        heading_accuracy_degrees,
-        max_delta_heading_degrees_per_second,
-        delta_heading_acceleration_degrees_per_second,
-        speed_accuracy_knots,
-        max_delta_speed_knots_per_second,
-        delta_speed_acceleration_knots_per_second,
-        altitude_accuracy_feet,
-        max_delta_altitude_feet_per_second,
-        delta_altitude_acceleration_feet_per_second,
-        ..
-    } = *game_variables;
     let delta_seconds = time.delta_secs_f64();
     for (mut aircraft, mut transform) in query {
-        let Aircraft {
-            cleared_altitude_feet,
-            wanted_altitude_feet,
-            cleared_heading,
-            cleared_speed_knots,
-            wanted_speed_knots,
-            heading,
-            heading_change_degrees_per_second,
-            speed_knots,
-            acceleration_knots_per_second,
-            altitude_feet,
-            altitude_change_feet_per_second,
-            cleared_heading_change_direction,
-            ..
-        } = &mut *aircraft;
-
-        // dbg!("Heading");
+        let Some(handle) = aircraft_types.0.get(&aircraft.aircraft_type_id) else {
+            continue;
+        };
+        let Some(aircraft_type) = aircraft_type_assets.get(handle) else {
+            continue;
+        };
+        // Parameter aus AircraftType
+        let heading_accuracy_degrees = aircraft_type.heading_accuracy_degrees;
+        let max_delta_heading_degrees_per_second =
+            aircraft_type.max_delta_heading_degrees_per_second;
+        let delta_heading_acceleration_degrees_per_second =
+            aircraft_type.delta_heading_acceleration_degrees_per_second;
+        let speed_accuracy_knots = aircraft_type.speed_accuracy_knots;
+        let max_delta_speed_knots_per_second = aircraft_type.max_delta_speed_knots_per_second;
+        let delta_speed_acceleration_knots_per_second =
+            aircraft_type.delta_speed_acceleration_knots_per_second;
+        let altitude_accuracy_feet = aircraft_type.altitude_accuracy_feet;
+        let max_delta_altitude_feet_per_second = aircraft_type.max_delta_altitude_feet_per_second;
+        let delta_altitude_acceleration_feet_per_second =
+            aircraft_type.delta_altitude_acceleration_feet_per_second;
 
         // heading
-        let wanted = cleared_heading.unwrap_or(*heading);
-        // FIXME: With heading, maybe not always correct, in proximity of
-        // required_change = 180 degrees, moving away from wanted heading
-        let required_change_u =
-            required_heading_change(*heading, wanted, *cleared_heading_change_direction);
-
-        if *heading_change_degrees_per_second != 0. || required_change_u != 0. {
+        let wanted = aircraft.cleared_heading.unwrap_or(aircraft.heading);
+        let required_change_u = required_heading_change(
+            aircraft.heading,
+            wanted,
+            aircraft.cleared_heading_change_direction,
+        );
+        if aircraft.heading_change_degrees_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
                 val_remaining_u: required_change_u,
                 accuracy_u: heading_accuracy_degrees,
                 max_delta_val_u_per_second: max_delta_heading_degrees_per_second,
                 delta_val_acceleration_u_per_second2: delta_heading_acceleration_degrees_per_second,
-                delta_val_u_per_second: *heading_change_degrees_per_second,
+                delta_val_u_per_second: aircraft.heading_change_degrees_per_second,
             };
             let MoveSmoothReturn {
                 finished_moving,
                 delta_val_u_per_second,
             } = move_smooth(params);
-            *heading_change_degrees_per_second = delta_val_u_per_second;
+            aircraft.heading_change_degrees_per_second = delta_val_u_per_second;
             if finished_moving {
-                *heading = wanted;
+                aircraft.heading = wanted;
                 transform.rotation = Quat::from_axis_angle(
                     Vec3 {
                         z: -1.,
@@ -307,41 +390,43 @@ fn update_aircrafts(
                 );
             }
         }
-        if *heading_change_degrees_per_second != 0. {
-            *heading = heading.change(delta_seconds * *heading_change_degrees_per_second);
+        if aircraft.heading_change_degrees_per_second != 0. {
+            aircraft.heading = aircraft
+                .heading
+                .change(delta_seconds * aircraft.heading_change_degrees_per_second);
             transform.rotation = Quat::from_axis_angle(
                 Vec3 {
                     z: -1.,
                     ..default()
                 },
-                heading.to_rotation() as f32,
+                aircraft.heading.to_rotation() as f32,
             );
         }
 
-        // dbg!("Speed");
         // speed
-        let wanted = cleared_speed_knots.unwrap_or(*wanted_speed_knots);
-        let required_change_u = -*speed_knots + wanted;
-        if required_change_u != 0. || *acceleration_knots_per_second != 0. {
+        let wanted = aircraft
+            .cleared_speed_knots
+            .unwrap_or(aircraft.wanted_speed_knots);
+        let required_change_u = -aircraft.speed_knots + wanted;
+        if required_change_u != 0. || aircraft.acceleration_knots_per_second != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
                 val_remaining_u: required_change_u,
                 accuracy_u: speed_accuracy_knots,
                 max_delta_val_u_per_second: max_delta_speed_knots_per_second,
                 delta_val_acceleration_u_per_second2: delta_speed_acceleration_knots_per_second,
-                delta_val_u_per_second: *acceleration_knots_per_second,
+                delta_val_u_per_second: aircraft.acceleration_knots_per_second,
             };
             let MoveSmoothReturn {
                 finished_moving,
                 delta_val_u_per_second,
             } = move_smooth(params);
-            *acceleration_knots_per_second = delta_val_u_per_second;
+            aircraft.acceleration_knots_per_second = delta_val_u_per_second;
             if finished_moving {
-                *speed_knots = wanted;
+                aircraft.speed_knots = wanted;
             }
         }
-        *speed_knots += *acceleration_knots_per_second * delta_seconds;
-
+        aircraft.speed_knots += aircraft.acceleration_knots_per_second * delta_seconds;
         let (Vec3 { z, .. }, angle) = transform.rotation.to_axis_angle();
         let angle = z * angle;
         let Vec2 {
@@ -349,36 +434,34 @@ fn update_aircrafts(
             y: y_part,
         } = Vec2::from_angle(angle);
         transform.translation.x +=
-            (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * x_part;
+            (aircraft.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * x_part;
         transform.translation.y +=
-            (*speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
+            (aircraft.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
 
         // altitude
-        // dbg!("Altitude");
-
-        let wanted = cleared_altitude_feet.unwrap_or(*wanted_altitude_feet);
-        let required_change_u = -*altitude_feet + wanted;
-        if *altitude_change_feet_per_second != 0. || required_change_u != 0. {
+        let wanted = aircraft
+            .cleared_altitude_feet
+            .unwrap_or(aircraft.wanted_altitude_feet);
+        let required_change_u = -aircraft.altitude_feet + wanted;
+        if aircraft.altitude_change_feet_per_second != 0. || required_change_u != 0. {
             let params = MoveSmoothParams {
                 delta_seconds,
                 val_remaining_u: required_change_u,
                 accuracy_u: altitude_accuracy_feet,
                 max_delta_val_u_per_second: max_delta_altitude_feet_per_second,
                 delta_val_acceleration_u_per_second2: delta_altitude_acceleration_feet_per_second,
-                delta_val_u_per_second: *altitude_change_feet_per_second,
+                delta_val_u_per_second: aircraft.altitude_change_feet_per_second,
             };
             let MoveSmoothReturn {
                 finished_moving,
                 delta_val_u_per_second,
             } = move_smooth(params);
-            *altitude_change_feet_per_second = delta_val_u_per_second;
+            aircraft.altitude_change_feet_per_second = delta_val_u_per_second;
             if finished_moving {
-                *altitude_feet = wanted;
+                aircraft.altitude_feet = wanted;
             }
         }
-        *altitude_feet += *altitude_change_feet_per_second * delta_seconds;
-
-        // dbg!("---------");
+        aircraft.altitude_feet += aircraft.altitude_change_feet_per_second * delta_seconds;
     }
 }
 
@@ -490,12 +573,12 @@ fn move_smooth(params: MoveSmoothParams) -> MoveSmoothReturn {
 fn apply_acceleration(
     direction: f64,
     delta_seconds: f64,
-    delta_val_acceleration_x_per_second2: f64,
+    delta_val_acceleration_x_per_seconds2: f64,
     max_delta_val_x_per_second: f64,
     delta_val_x_per_second: f64,
 ) -> f64 {
-    let mut delta_val_x_per_second_new =
-        delta_val_x_per_second + direction * (delta_seconds * delta_val_acceleration_x_per_second2);
+    let mut delta_val_x_per_second_new = delta_val_x_per_second
+        + direction * (delta_seconds * delta_val_acceleration_x_per_seconds2);
     delta_val_x_per_second_new =
         delta_val_x_per_second_new.clamp(-max_delta_val_x_per_second, max_delta_val_x_per_second);
     delta_val_x_per_second_new
@@ -523,38 +606,21 @@ fn handle_dev_gui_events(
 #[derive(Debug, Clone, Resource, Reflect)]
 pub struct GameVariables {
     pub level: LevelMeta,
-    pub heading_accuracy_degrees: f64,
-    pub max_delta_heading_degrees_per_second: f64,
-    pub delta_heading_acceleration_degrees_per_second: f64,
-    pub speed_accuracy_knots: f64,
-    pub max_delta_speed_knots_per_second: f64,
-    pub delta_speed_acceleration_knots_per_second: f64,
-    pub altitude_accuracy_feet: f64,
-    pub max_delta_altitude_feet_per_second: f64,
-    pub delta_altitude_acceleration_feet_per_second: f64,
 }
 
 impl DevGuiStructTrait for GameVariables {}
 
 impl GameVariables {
     pub fn new(level: LevelMeta) -> Self {
-        Self {
-            level,
-            heading_accuracy_degrees: 0.2,
-            max_delta_heading_degrees_per_second: 2.0,
-            delta_heading_acceleration_degrees_per_second: 0.1,
-            speed_accuracy_knots: 0.2,
-            max_delta_speed_knots_per_second: 2.,
-            delta_speed_acceleration_knots_per_second: 0.1,
-            altitude_accuracy_feet: 10.,
-            max_delta_altitude_feet_per_second: 100.0,
-            delta_altitude_acceleration_feet_per_second: 5.,
-        }
+        Self { level }
     }
 }
 
 #[derive(Resource)]
 pub struct GameResources {}
+
+#[derive(Resource)]
+pub struct AircraftTypeStore(pub HashMap<String, Handle<AircraftType>>);
 
 const AIRCRAFT_COLOR: Srgba = Srgba {
     red: 0.,
@@ -585,11 +651,17 @@ fn spawn_aircraft_at_mouse(
     let call_signs = ["Alpha1", "Bravo2", "Charlie3", "Delta4", "Echo5"];
     let idx = (rng.next_u32() as usize) % call_signs.len();
     let call_sign = call_signs[idx].to_string();
+
+    let aircraft_types = ["a320", "b737", "b747", "cessna172"];
+    let idx = (rng.next_u32() as usize) % aircraft_types.len();
+    let aircraft_type = aircraft_types[idx].to_string();
+
     let heading = (rng.next_u32() % 360) as f64;
     let altitude_feet = 1000.0 + (rng.next_u32() % 39000) as f64;
     let entity = commands
         .spawn((
             Aircraft {
+                aircraft_type_id: aircraft_type.to_owned(),
                 call_sign,
                 cleared_altitude_feet: None,
                 wanted_altitude_feet: 30000.,
@@ -657,6 +729,32 @@ pub enum GameState {
 pub enum TurnDirection {
     Left,
     Right,
+}
+
+#[derive(Debug, Clone)]
+pub enum AircraftTypesLoadingState {
+    PendingIndex(Handle<AircraftTypeIndexFile>),
+    PendingAircraftTypes(Vec<Handle<AircraftType>>),
+    Finished,
+}
+
+#[derive(Debug, Clone)]
+pub enum LevelLoadingState {
+    PendingLevel(Handle<LevelFile>),
+    Finished,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, States, Resource)]
+pub enum LoadingState {
+    LoadingHandles,
+    SpawningLevel,
+    Finished,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct HandleLoadingState {
+    pub level: LevelLoadingState,
+    pub aircraft_types: AircraftTypesLoadingState,
 }
 
 #[cfg(test)]

@@ -1,0 +1,9 @@
+AircraftTypeIndexFile(
+    types: [
+        AircraftTypeMeta(id: "b737", file: "b737.ron", name: "Boeing 737"),
+        AircraftTypeMeta(id: "a320", file: "a320.ron", name: "Airbus A320"),
+        AircraftTypeMeta(id: "cessna172", file: "cessna172.ron", name: "Cessna 172"),
+        AircraftTypeMeta(id: "b747", file: "b747.ron", name: "Boeing 747"),
+        // Weitere Typen können ergänzt werden
+    ]
+)

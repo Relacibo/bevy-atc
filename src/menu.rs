@@ -76,7 +76,7 @@ fn menu_setup(
     asset_server: Res<AssetServer>,
 ) {
     menu_state.set(MenuState::Main);
-    let handle = asset_server.load("levels/level_index.ron");
+    let handle = asset_server.load("levels/index.ron");
     commands.insert_resource(MenuData {
         selected_level: None,
         level_index_handle: handle,
