@@ -31,7 +31,7 @@ LevelFile(
         (name: "FARIX", pos: (300.0, -600.0)),
     ],
     runways: [
-        (name: "03", start: (250.0, 310.0), end: (320.0, 350.0), elevation: 2000.),
+        (name: "06", start: (250.0, 310.0), end: (320.0, 350.0), elevation: 2000.),
     ],
     sectors: [
         (
