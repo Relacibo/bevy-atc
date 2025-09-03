@@ -1,17 +1,16 @@
+use crate::game::aircraft::AircraftJustSpawned;
+use crate::game::run_conditions::was_mouse_wheel_used;
+use aviation_helper_rs::heading::Heading;
 use bevy::ecs::component::Component;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use strum::{EnumIter, IntoEnumIterator};
 
-use crate::game::AircraftJustSpawned;
-use crate::game::run_conditions::was_mouse_wheel_used;
-
 use super::aircraft::Aircraft;
 use super::control::{
     ControlMode, ControlState, control_mode_is_clearance_selection, control_mode_is_normal,
 };
-use super::heading::Heading;
 use super::{GameState, Z_AIRCRAFT_CARD};
 
 const AIRCRAFT_CARD_COLOR: Srgba = Srgba {
@@ -45,24 +44,24 @@ pub struct AircraftCardPlugin;
 
 impl Plugin for AircraftCardPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_aircraft_card_display_materials);
-        app.add_systems(
-            Update,
-            (
-                handle_escape_clear_selected.run_if(input_just_pressed(KeyCode::Escape)),
-                handle_clear_selected_on_any_click,
-                update_aircraft_card,
-                handle_aircraft_just_spawned,
-                update_pinned,
+        app.add_systems(Startup, setup_aircraft_card_display_materials)
+            .add_systems(
+                Update,
                 (
-                    handle_aircraft_card_display_press.run_if(control_mode_is_normal),
-                    handle_card_scroll
-                        .run_if(control_mode_is_clearance_selection.and(was_mouse_wheel_used)),
+                    handle_escape_clear_selected.run_if(input_just_pressed(KeyCode::Escape)),
+                    handle_clear_selected_on_any_click,
+                    update_aircraft_card,
+                    handle_aircraft_just_spawned,
+                    update_pinned,
+                    (
+                        handle_aircraft_card_display_press.run_if(control_mode_is_normal),
+                        handle_card_scroll
+                            .run_if(control_mode_is_clearance_selection.and(was_mouse_wheel_used)),
+                    )
+                        .after(handle_clear_selected_on_any_click),
                 )
-                    .after(handle_clear_selected_on_any_click),
-            )
-                .run_if(in_state(GameState::Running)),
-        );
+                    .run_if(in_state(GameState::Running)),
+            );
     }
 }
 
