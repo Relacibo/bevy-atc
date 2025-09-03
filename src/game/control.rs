@@ -10,7 +10,6 @@ pub enum ControlMode {
         display_entity: Entity,
         display: AircraftCardDisplay,
     },
-    // Weitere Modi können hier ergänzt werden
 }
 
 #[derive(Clone, Debug, Resource, Default)]
