@@ -544,9 +544,11 @@ pub fn update_speed_indicators(
                 // Position the indicator so it starts from the aircraft center and extends forward
                 // Half the length forward in the X direction (relative to the aircraft)
                 // Also compensate position for parent scaling
-                indicator_transform.translation.x = compensated_length / 2.0;
-                indicator_transform.translation.y = 0.0;
-                indicator_transform.translation.z = 0.1; // Slightly above aircraft
+                indicator_transform.translation = Vec3 {
+                    x: compensated_length / 2.0,
+                    y: 0.0,
+                    z: 0.1,
+                }
             }
         }
     }
