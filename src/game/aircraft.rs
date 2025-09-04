@@ -25,14 +25,24 @@ pub struct AircraftTypeStore(pub HashMap<String, Handle<AircraftType>>);
 pub struct AircraftMeshMaterials {
     pub mesh: Handle<Mesh>,
     pub material: Handle<ColorMaterial>,
+    pub speed_indicator_mesh: Handle<Mesh>,
+    pub speed_indicator_material: Handle<ColorMaterial>,
 }
 
 const AIRCRAFT_PLUGIN: &str = "AircraftPlugin";
 
-const AIRCRAFT_MESH_MAIN_HALF_SIZE: f32 = 5.0;
+const AIRCRAFT_SIZE: f32 = 10.0; // Quadrat-Größe des Flugzeugs
 
-const AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE: f32 = 0.5;
-const AIRCRAFT_MESH_DIRECTION_LENGTH: f32 = 30.0;
+// Speed indicator constants
+const SPEED_INDICATOR_WIDTH: f32 = 2.0; // Breite des Geschwindigkeitsindikators
+
+// Aircraft scaling constants
+const AIRCRAFT_SCALE_MIN: f32 = 0.8;
+const AIRCRAFT_SCALE_MAX: f32 = 2.5;
+
+// Global zoom constants
+const ZOOM_SCALE_MIN: f32 = 0.5; // Camera zoom at which elements reach max scale
+const ZOOM_SCALE_MAX: f32 = 4.0; // Camera zoom at which elements reach min scale
 
 pub struct AircraftPlugin;
 
@@ -59,7 +69,11 @@ impl Plugin for AircraftPlugin {
         )
         .add_systems(
             Update,
-            poll_aircraft_types_loaded.run_if(in_state(LoadingState::LoadingHandles)),
+            (
+                poll_aircraft_types_loaded.run_if(in_state(LoadingState::LoadingHandles)),
+                update_aircraft_scale.run_if(in_state(GameState::Running)),
+                update_speed_indicators.run_if(in_state(GameState::Running)),
+            ),
         )
         .init_state::<LoadingState>();
 
@@ -152,13 +166,12 @@ pub fn spawn_aircraft(
         cleared_heading_change_direction: None,
     };
 
-    let entity = commands
-        .spawn(create_aircraft_bundle(
-            aircraft,
-            Vec2::new(0.0, 0.0),
-            &mesh_materials,
-        ))
-        .id();
+    let entity = spawn_aircraft_with_speed_indicator(
+        &mut commands,
+        aircraft,
+        Vec2::new(0.0, 0.0),
+        &mesh_materials,
+    );
     writer.write(AircraftJustSpawned(entity));
 }
 
@@ -205,9 +218,8 @@ fn spawn_aircraft_at_mouse(
         cleared_heading_change_direction: None,
     };
 
-    let entity = commands
-        .spawn(create_aircraft_bundle(aircraft, world_pos, &mesh_materials))
-        .id();
+    let entity =
+        spawn_aircraft_with_speed_indicator(&mut commands, aircraft, world_pos, &mesh_materials);
     writer.write(AircraftJustSpawned(entity));
 }
 
@@ -224,8 +236,32 @@ fn create_aircraft_bundle(
         aircraft,
         Mesh2d(mesh_materials.mesh.clone()),
         MeshMaterial2d(mesh_materials.material.clone()),
-        Transform::from_xyz(world_pos.x, world_pos.y, Z_AIRCRAFT).with_rotation(rotation),
+        Transform::from_translation(world_pos.extend(Z_AIRCRAFT)).with_rotation(rotation),
     )
+}
+
+/// Spawnt ein Flugzeug mit einem Speed-Indikator als Child-Entity
+fn spawn_aircraft_with_speed_indicator(
+    commands: &mut Commands,
+    aircraft: Aircraft,
+    world_pos: Vec2,
+    mesh_materials: &AircraftMeshMaterials,
+) -> Entity {
+    // Speed-Indikator als Child-Entity
+    let speed_indicator = commands
+        .spawn((
+            SpeedIndicator,
+            Mesh2d(mesh_materials.speed_indicator_mesh.clone()),
+            MeshMaterial2d(mesh_materials.speed_indicator_material.clone()),
+            Transform::from_xyz(0.0, 0.0, 0.1), // Leicht über dem Flugzeug
+        ))
+        .id();
+
+    // Hauptflugzeug-Entity
+    commands
+        .spawn(create_aircraft_bundle(aircraft, world_pos, mesh_materials))
+        .add_children(&[speed_indicator])
+        .id()
 }
 
 pub fn update_aircrafts(
@@ -286,7 +322,7 @@ pub fn update_aircrafts(
         }
         if aircraft.heading_change_degrees_per_second != 0. {
             aircraft.heading =
-                aircraft.heading + delta_seconds * aircraft.heading_change_degrees_per_second;
+                aircraft.heading + (delta_seconds * aircraft.heading_change_degrees_per_second);
             let rotation_radians = aircraft.heading.to_bevy_rotation() as f32;
             transform.rotation = Quat::from_rotation_z(rotation_radians);
         }
@@ -435,93 +471,85 @@ fn setup_aircraft_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let combined_mesh = create_combined_aircraft_mesh();
-    let mesh_handle = meshes.add(combined_mesh);
-
-    let material_handle = materials.add(ColorMaterial::from(Color::Srgba(AIRCRAFT_COLOR)));
+    // Einfaches Quadrat-Mesh für das Flugzeug
+    let aircraft_mesh = meshes.add(Rectangle::new(AIRCRAFT_SIZE, AIRCRAFT_SIZE));
+    let aircraft_material = materials.add(ColorMaterial::from(Color::Srgba(AIRCRAFT_COLOR)));
+    // Speed-Indikator - wir erstellen eine 1x1 Rechteck und skalieren es dynamisch
+    let speed_indicator_mesh = meshes.add(Rectangle::new(1.0, SPEED_INDICATOR_WIDTH));
 
     commands.insert_resource(AircraftMeshMaterials {
-        mesh: mesh_handle,
-        material: material_handle,
+        mesh: aircraft_mesh,
+        material: aircraft_material.clone(),
+        speed_indicator_mesh,
+        speed_indicator_material: aircraft_material,
     });
 }
 
-fn create_combined_aircraft_mesh() -> Mesh {
-    use bevy::render::mesh::{Indices, PrimitiveTopology};
-    let direction_start_x = AIRCRAFT_MESH_MAIN_HALF_SIZE;
-    let direction_end_x = direction_start_x + AIRCRAFT_MESH_DIRECTION_LENGTH;
+/// Update aircraft scale based on camera zoom level
+/// Aircraft get larger when zooming out, smaller when zooming in, with min/max limits
+pub fn update_aircraft_scale(
+    mut q_aircraft: Query<&mut Transform, With<Aircraft>>,
+    camera_projection: Single<&Projection, With<Camera2d>>,
+) {
+    let scale = if let Projection::Orthographic(ortho) = &**camera_projection {
+        ortho.scale
+    } else {
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
+        return;
+    };
 
-    let mut positions = Vec::new();
-    let mut indices = Vec::new();
+    // Calculate the scale factor for aircraft based on camera zoom
+    let normalized_zoom = (scale - ZOOM_SCALE_MIN) / (ZOOM_SCALE_MAX - ZOOM_SCALE_MIN);
+    let clamped_zoom = normalized_zoom.clamp(0.0, 1.0);
 
-    // Square
-    positions.extend_from_slice(&[
-        [
-            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            0.0,
-        ], // 0: bottom left
-        [
-            AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            0.0,
-        ], // 1: bottom right
-        [
-            AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            0.0,
-        ], // 2: top right
-        [
-            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            AIRCRAFT_MESH_MAIN_HALF_SIZE,
-            0.0,
-        ], // 3: top left
-    ]);
-    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+    // Direct relationship: when zoomed out (higher scale), aircraft get larger
+    let aircraft_scale_factor =
+        AIRCRAFT_SCALE_MIN + (clamped_zoom * (AIRCRAFT_SCALE_MAX - AIRCRAFT_SCALE_MIN));
 
-    let direction_start_index = positions.len() as u32;
-    positions.extend_from_slice(&[
-        [
-            direction_start_x,
-            -AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
-            0.0,
-        ], // 4: bottom left
-        [
-            direction_end_x,
-            -AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
-            0.0,
-        ], // 5: bottom right
-        [
-            direction_end_x,
-            AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
-            0.0,
-        ], // 6: top right
-        [
-            direction_start_x,
-            AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
-            0.0,
-        ], // 7: top left
-    ]);
+    for mut transform in &mut q_aircraft {
+        // Preserve existing rotation, only update scale
+        let current_rotation = transform.rotation;
+        transform.scale = Vec3::new(aircraft_scale_factor, aircraft_scale_factor, 1.0);
+        transform.rotation = current_rotation;
+    }
+}
 
-    // Direction indicator
-    indices.extend_from_slice(&[
-        direction_start_index,     // 4: bottom left
-        direction_start_index + 1, // 5: bottom right
-        direction_start_index + 2, // 6: top right
-        direction_start_index,     // 4: bottom left
-        direction_start_index + 2, // 6: top right
-        direction_start_index + 3, // 7: top left
-    ]);
+/// Update speed indicators to show the distance the aircraft would travel in one minute
+/// The length represents how far the aircraft will fly in one minute at current speed
+/// The indicator does NOT scale with camera zoom - it maintains absolute size
+pub fn update_speed_indicators(
+    query: Query<(&Aircraft, &Children, &Transform), With<Aircraft>>,
+    mut q_indicators: Query<&mut Transform, (With<SpeedIndicator>, Without<Aircraft>)>,
+) {
+    for (aircraft, children, aircraft_transform) in query.iter() {
+        // Find the speed indicator child
+        for child in children.iter() {
+            if let Ok(mut indicator_transform) = q_indicators.get_mut(child) {
+                // Calculate distance in pixels for one minute flight
+                // Speed is in knots, PIXEL_PER_KNOT_SECOND converts knots/second to pixels/second
+                // Multiply by 60 to get pixels for one minute
+                let distance_in_one_minute =
+                    (aircraft.speed_knots * PIXEL_PER_KNOT_SECOND * 60.0) as f32;
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD
-            | bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_indices(Indices::U32(indices));
+                // Compensate for aircraft scaling to maintain absolute indicator size
+                // The aircraft's scale is used for camera zoom, but we want the indicator
+                // to maintain its real-world size regardless of zoom
+                let aircraft_scale = aircraft_transform.scale.x; // Assuming uniform scaling
+                let compensated_length = distance_in_one_minute / aircraft_scale;
 
-    mesh
+                // Set the scale to represent the distance (length)
+                // We keep the width constant and scale the length, compensating for parent scale
+                indicator_transform.scale = Vec3::new(compensated_length, 1.0, 1.0);
+
+                // Position the indicator so it starts from the aircraft center and extends forward
+                // Half the length forward in the X direction (relative to the aircraft)
+                // Also compensate position for parent scaling
+                indicator_transform.translation.x = compensated_length / 2.0;
+                indicator_transform.translation.y = 0.0;
+                indicator_transform.translation.z = 0.1; // Slightly above aircraft
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Resource)]
@@ -593,6 +621,13 @@ const AIRCRAFT_COLOR: Srgba = Srgba {
     alpha: 1.0,
 };
 
+const SPEED_INDICATOR_COLOR: Srgba = Srgba {
+    red: 0.8,
+    green: 0.8,
+    blue: 0.2,
+    alpha: 0.8,
+};
+
 #[derive(Debug, Clone, Deserialize, Reflect)]
 pub enum AircraftCharacteristic {
     Heavy,
@@ -600,6 +635,9 @@ pub enum AircraftCharacteristic {
 
 #[derive(Clone, Debug, Event)]
 pub struct AircraftJustSpawned(pub Entity);
+
+#[derive(Component)]
+pub struct SpeedIndicator;
 
 #[derive(Debug)]
 pub struct MoveSmoothParams {

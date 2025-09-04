@@ -33,7 +33,19 @@ const SELECTED_AIRCRAFT_CARD_COLOR: Srgba = Srgba {
     alpha: 0.7,
 };
 
-const MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS: f32 = 200.0;
+// Drag distance scaling constants
+const DRAG_DISTANCE_BASE: f32 = 200.0; // Base distance in pixels
+const DRAG_DISTANCE_SCALE_MIN: f32 = 1.0;
+const DRAG_DISTANCE_SCALE_MAX: f32 = 3.0;
+
+// Card scaling with camera zoom constants
+const CARD_SCALE_MIN: f32 = 1.0;
+const CARD_SCALE_MAX: f32 = 4.0;
+
+// Global zoom constants
+const ZOOM_SCALE_MIN: f32 = 0.5; // Camera zoom at which elements reach max scale
+const ZOOM_SCALE_MAX: f32 = 4.0; // Camera zoom at which elements reach min scale
+
 const STEP_HEADING: f64 = 5.;
 const STEP_HEADING_ACCEL: f64 = 30.;
 const STEP_SPEED: f64 = 10.;
@@ -53,6 +65,7 @@ impl Plugin for AircraftCardPlugin {
                     handle_escape_clear_selected.run_if(input_just_pressed(KeyCode::Escape)),
                     handle_clear_selected_on_any_click,
                     update_aircraft_card,
+                    update_card_scale,
                     handle_aircraft_just_spawned,
                     update_pinned,
                     (
@@ -399,25 +412,47 @@ pub fn handle_card_scroll(
 }
 
 pub fn update_pinned(
-    mut q_pinned: Query<(&PinnedTo, &mut Transform), Without<BeingDragged>>,
+    mut q_pinned: Query<(&mut PinnedTo, &mut Transform), Without<BeingDragged>>,
     q_target: Query<&Transform, Without<PinnedTo>>,
+    camera_projection: Single<&Projection, With<Camera2d>>,
 ) {
-    for (
-        PinnedTo {
-            entity: pinned_to_entity,
-            relative_translation,
-        },
-        mut pinned_by_transform,
-    ) in &mut q_pinned
-    {
+    let scale = if let Projection::Orthographic(ortho) = &**camera_projection {
+        ortho.scale
+    } else {
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
+        return;
+    };
+
+    // Calculate current max drag distance based on camera zoom
+    let normalized_zoom = (scale - ZOOM_SCALE_MIN) / (ZOOM_SCALE_MAX - ZOOM_SCALE_MIN);
+    let clamped_zoom = normalized_zoom.clamp(0.0, 1.0);
+    let distance_scale_factor = DRAG_DISTANCE_SCALE_MIN
+        + (clamped_zoom * (DRAG_DISTANCE_SCALE_MAX - DRAG_DISTANCE_SCALE_MIN));
+    let max_drag_distance = DRAG_DISTANCE_BASE * distance_scale_factor;
+
+    for (mut pinned_to, mut pinned_by_transform) in &mut q_pinned {
         let Ok(Transform {
             translation: target_translation,
             ..
-        }) = q_target.get(*pinned_to_entity)
+        }) = q_target.get(pinned_to.entity)
         else {
             continue;
         };
-        pinned_by_transform.translation = target_translation + relative_translation;
+
+        // Check if current relative distance exceeds max drag distance
+        let current_distance = (pinned_to.relative_translation.x
+            * pinned_to.relative_translation.x
+            + pinned_to.relative_translation.y * pinned_to.relative_translation.y)
+            .sqrt();
+
+        if current_distance > max_drag_distance {
+            // Scale down the relative translation to fit within max drag distance
+            let scale_factor = max_drag_distance / current_distance;
+            pinned_to.relative_translation.x *= scale_factor;
+            pinned_to.relative_translation.y *= scale_factor;
+        }
+
+        pinned_by_transform.translation = target_translation + pinned_to.relative_translation;
     }
 }
 
@@ -475,10 +510,17 @@ fn on_card_drag(
 
     let distance = (new_relative_x * new_relative_x + new_relative_y * new_relative_y).sqrt();
 
-    let final_relative = if distance <= MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS {
+    // Calculate scaled max drag distance based on camera zoom
+    let normalized_zoom = (scale - ZOOM_SCALE_MIN) / (ZOOM_SCALE_MAX - ZOOM_SCALE_MIN);
+    let clamped_zoom = normalized_zoom.clamp(0.0, 1.0);
+    let distance_scale_factor = DRAG_DISTANCE_SCALE_MIN
+        + (clamped_zoom * (DRAG_DISTANCE_SCALE_MAX - DRAG_DISTANCE_SCALE_MIN));
+    let max_drag_distance = DRAG_DISTANCE_BASE * distance_scale_factor;
+
+    let final_relative = if distance <= max_drag_distance {
         Vec3::new(new_relative_x, new_relative_y, current_relative.z)
     } else {
-        let scale_factor = MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS / distance;
+        let scale_factor = max_drag_distance / distance;
         Vec3::new(
             new_relative_x * scale_factor,
             new_relative_y * scale_factor,
@@ -498,4 +540,31 @@ fn on_card_drag_start(trigger: Trigger<Pointer<DragStart>>, mut commands: Comman
 fn on_card_drag_end(trigger: Trigger<Pointer<DragEnd>>, mut commands: Commands) {
     let target = trigger.event().target;
     commands.entity(target).remove::<BeingDragged>();
+}
+
+/// Update aircraft card scale based on camera zoom level
+/// Cards get larger when zooming out, smaller when zooming in, with min/max limits
+pub fn update_card_scale(
+    mut q_cards: Query<&mut Transform, With<AircraftCard>>,
+    camera_projection: Single<&Projection, With<Camera2d>>,
+) {
+    let scale = if let Projection::Orthographic(ortho) = &**camera_projection {
+        ortho.scale
+    } else {
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
+        return;
+    };
+
+    // Calculate the scale factor for cards based on camera zoom
+    // When camera scale is small (zoomed in), cards should be smaller
+    // When camera scale is large (zoomed out), cards should be larger
+    let normalized_zoom = (scale - ZOOM_SCALE_MIN) / (ZOOM_SCALE_MAX - ZOOM_SCALE_MIN);
+    let clamped_zoom = normalized_zoom.clamp(0.0, 1.0);
+
+    // Direct relationship: when zoomed out (higher scale), cards get larger
+    let card_scale_factor = CARD_SCALE_MIN + (clamped_zoom * (CARD_SCALE_MAX - CARD_SCALE_MIN));
+
+    for mut transform in &mut q_cards {
+        transform.scale = Vec3::new(card_scale_factor, card_scale_factor, 1.0);
+    }
 }
