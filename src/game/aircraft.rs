@@ -285,9 +285,8 @@ pub fn update_aircrafts(
             }
         }
         if aircraft.heading_change_degrees_per_second != 0. {
-            aircraft.heading = aircraft
-                .heading
-                .change(delta_seconds * aircraft.heading_change_degrees_per_second);
+            aircraft.heading =
+                aircraft.heading + delta_seconds * aircraft.heading_change_degrees_per_second;
             let rotation_radians = aircraft.heading.to_bevy_rotation() as f32;
             transform.rotation = Quat::from_rotation_z(rotation_radians);
         }

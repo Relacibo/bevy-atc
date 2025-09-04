@@ -18,7 +18,7 @@ impl Add for Heading {
     type Output = f64;
 
     fn add(self, rhs: Self) -> Self::Output {
-        (self.0 + rhs.0) % 360.
+        (self.0 + rhs.0).rem_euclid(360.)
     }
 }
 
@@ -30,13 +30,22 @@ impl Sub for Heading {
     }
 }
 
-impl Heading {
-    pub fn change(self, heading_change: f64) -> Heading {
-        let Heading(heading) = self;
-        let res = (heading + heading_change).rem_euclid(360.);
-        Heading(res)
-    }
+impl Add<f64> for Heading {
+    type Output = Heading;
 
+    fn add(self, rhs: f64) -> Self::Output {
+        Heading((self.0 + rhs).rem_euclid(360.))
+    }
+}
+impl Sub<f64> for Heading {
+    type Output = Heading;
+
+    fn sub(self, rhs: f64) -> Self::Output {
+        Heading((self.0 - rhs).rem_euclid(360.))
+    }
+}
+
+impl Heading {
     pub fn to_bevy_rotation(self) -> f64 {
         let Heading(heading) = self;
         aviation_degrees_to_bevy_rotation(heading)
