@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Sub},
 };
 
-use crate::conversions::{degrees_to_rotation, rotation_to_degrees};
+use crate::conversions::{aviation_degrees_to_bevy_rotation, bevy_rotation_to_aviation_degrees};
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct Heading(f64);
@@ -37,13 +37,13 @@ impl Heading {
         Heading(res)
     }
 
-    pub fn to_rotation(self) -> f64 {
+    pub fn to_bevy_rotation(self) -> f64 {
         let Heading(heading) = self;
-        degrees_to_rotation(heading)
+        aviation_degrees_to_bevy_rotation(heading)
     }
 
-    pub fn from_rotation(value: f64) -> Self {
-        let heading = rotation_to_degrees(value);
+    pub fn from_bevy_rotation(value: f64) -> Self {
+        let heading = bevy_rotation_to_aviation_degrees(value);
         Heading(heading)
     }
 

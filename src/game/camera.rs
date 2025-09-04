@@ -41,7 +41,7 @@ fn move_camera(
 ) {
     let (ref mut transform, projection) = camera.into_inner();
     let Projection::Orthographic(projection) = projection else {
-        eprintln!("Wrong camera projection. Expected orthographic!");
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
         return;
     };
     let factor = projection.scale;
@@ -55,7 +55,7 @@ fn zoom_camera(
 ) {
     // https://bevyengine.org/examples/camera/projection-zoom/
     let Projection::Orthographic(ref mut projection) = *projection.into_inner() else {
-        eprintln!("Wrong camera projection. Expected orthographic!");
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
         return;
     };
 

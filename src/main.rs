@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
 
     let res = app.run();
     if let AppExit::Error(err) = res {
-        eprintln!("Bevy exited with Error: {err}")
+        bevy::log::error!("Bevy exited with Error: {err}")
     }
     Ok(())
 }

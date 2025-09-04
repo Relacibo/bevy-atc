@@ -4,8 +4,9 @@ use aviation_helper_rs::heading::Heading;
 use bevy::ecs::component::Component;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::picking::events::{Drag, DragEnd, DragStart, Pointer};
 use bevy::prelude::*;
-use strum::{EnumIter, IntoEnumIterator};
+use strum::EnumIter;
 
 use super::aircraft::Aircraft;
 use super::control::{
@@ -32,6 +33,7 @@ const SELECTED_AIRCRAFT_CARD_COLOR: Srgba = Srgba {
     alpha: 0.7,
 };
 
+const MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS: f32 = 200.0;
 const STEP_HEADING: f64 = 5.;
 const STEP_HEADING_ACCEL: f64 = 30.;
 const STEP_SPEED: f64 = 10.;
@@ -79,14 +81,15 @@ pub enum AircraftCardDisplay {
     Altitude,
 }
 
-// Relationship-Komponente: Die AircraftCard ist an ein Aircraft "angeheftet" und speichert die relative Transformation
 #[derive(Component)]
 pub struct PinnedTo {
     pub entity: Entity,
     pub relative_translation: Vec3,
 }
 
-// Resource für die Material-Handles
+#[derive(Component)]
+pub struct BeingDragged;
+
 #[derive(Resource, Clone)]
 pub struct AircraftCardDisplayMaterials {
     pub normal: Handle<ColorMaterial>,
@@ -213,6 +216,11 @@ pub fn handle_aircraft_just_spawned(
             Transform::from_xyz(0., 0., Z_AIRCRAFT_CARD),
             Visibility::Visible,
         ));
+
+        entity
+            .observe(on_card_drag_start)
+            .observe(on_card_drag)
+            .observe(on_card_drag_end);
         entity.add_children(&children);
     }
 }
@@ -246,16 +254,12 @@ fn create_card_display_bundle(
     )
 }
 
-// Entferne die Resource SelectedAircraftCardDisplay und die Komponente CameraScrollEnabled
-// Passe die Auswahl- und Scroll-Logik auf ControlState/ControlMode an
-
-// Auswahl-System: Setzt ControlMode::ClearanceSelection
 #[allow(clippy::too_many_arguments)]
 pub fn handle_aircraft_card_display_press(
     mut events: EventReader<Pointer<Pressed>>,
     q_card_display: Query<(Entity, &AircraftCardDisplay, &ChildOf)>,
-    q_card: Query<&PinnedTo, With<AircraftCard>>, // für Aircraft-Entity
-    mut q_aircraft: Query<&mut Aircraft>,         // für Clearance-Entfernung
+    q_card: Query<&PinnedTo, With<AircraftCard>>,
+    mut q_aircraft: Query<&mut Aircraft>,
     mut q_display: Query<(&AircraftCardDisplay, &mut MeshMaterial2d<ColorMaterial>)>,
     card_materials: Res<AircraftCardDisplayMaterials>,
     mut control_state: ResMut<ControlState>,
@@ -296,7 +300,6 @@ pub fn handle_aircraft_card_display_press(
     }
 }
 
-// Auswahl löschen bei Klick auf Hintergrund oder Escape
 pub fn handle_clear_selected_on_any_click(
     mut events: EventReader<Pointer<Pressed>>,
     mut q_display: Query<&mut MeshMaterial2d<ColorMaterial>>,
@@ -396,7 +399,7 @@ pub fn handle_card_scroll(
 }
 
 pub fn update_pinned(
-    mut q_pinned: Query<(&PinnedTo, &mut Transform)>,
+    mut q_pinned: Query<(&PinnedTo, &mut Transform), Without<BeingDragged>>,
     q_target: Query<&Transform, Without<PinnedTo>>,
 ) {
     for (
@@ -430,5 +433,69 @@ fn calculate_cleared_value(current: f64, cleared: Option<f64>, delta: f64, step:
         (false, true) => idx.floor(),
         (false, false) => idx.ceil(),
     };
+    // TODO: Delta (scroll delta) is not factored in yet
     new_idx * step
+}
+
+fn on_card_drag(
+    trigger: Trigger<Pointer<Drag>>,
+    mut cards: Query<(&mut PinnedTo, &mut Transform), With<AircraftCard>>,
+    aircrafts: Query<&Transform, (With<Aircraft>, Without<AircraftCard>)>,
+    camera_projection: Single<&Projection, With<Camera2d>>,
+) {
+    let Pointer {
+        target,
+        event: Drag { button, delta, .. },
+        ..
+    } = &trigger.event();
+
+    let Ok((mut pinned_to, mut card_transform)) = cards.get_mut(*target) else {
+        return;
+    };
+
+    if *button != PointerButton::Primary {
+        return;
+    }
+
+    let scale = if let Projection::Orthographic(ortho) = &**camera_projection {
+        ortho.scale
+    } else {
+        bevy::log::error!("Wrong camera projection. Expected orthographic!");
+        return;
+    };
+
+    let Ok(aircraft_transform) = aircrafts.get(pinned_to.entity) else {
+        return;
+    };
+
+    let current_relative = card_transform.translation - aircraft_transform.translation;
+
+    let new_relative_x = current_relative.x + delta.x * scale;
+    let new_relative_y = current_relative.y - delta.y * scale;
+
+    let distance = (new_relative_x * new_relative_x + new_relative_y * new_relative_y).sqrt();
+
+    let final_relative = if distance <= MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS {
+        Vec3::new(new_relative_x, new_relative_y, current_relative.z)
+    } else {
+        let scale_factor = MAX_DRAG_DISTANCE_FROM_AIRCRAFT_PIXELS / distance;
+        Vec3::new(
+            new_relative_x * scale_factor,
+            new_relative_y * scale_factor,
+            current_relative.z,
+        )
+    };
+
+    pinned_to.relative_translation = final_relative;
+    card_transform.translation = aircraft_transform.translation + final_relative;
+}
+
+fn on_card_drag_start(trigger: Trigger<Pointer<DragStart>>, mut commands: Commands) {
+    let target = trigger.event().target;
+    commands.entity(target).insert(BeingDragged);
+}
+
+fn on_card_drag_end(trigger: Trigger<Pointer<DragEnd>>, mut commands: Commands) {
+    let target = trigger.event().target;
+    commands.entity(target).remove::<BeingDragged>();
 }

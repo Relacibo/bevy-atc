@@ -2,6 +2,7 @@ use aviation_helper_rs::clearance::turn_direction::TurnDirection;
 use bevy::asset::Asset;
 use bevy::dev_tools::states::log_transitions;
 use bevy::input::common_conditions::input_just_pressed;
+use bevy::platform::collections::hash_map::HashMap;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::window::PrimaryWindow;
@@ -17,7 +18,21 @@ use crate::game::{GameState, Z_AIRCRAFT};
 use crate::util::consts::PIXEL_PER_KNOT_SECOND;
 use aviation_helper_rs::heading::Heading;
 
+#[derive(Resource, Default)]
+pub struct AircraftTypeStore(pub HashMap<String, Handle<AircraftType>>);
+
+#[derive(Resource, Default)]
+pub struct AircraftMeshMaterials {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<ColorMaterial>,
+}
+
 const AIRCRAFT_PLUGIN: &str = "AircraftPlugin";
+
+const AIRCRAFT_MESH_MAIN_HALF_SIZE: f32 = 5.0;
+
+const AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE: f32 = 0.5;
+const AIRCRAFT_MESH_DIRECTION_LENGTH: f32 = 30.0;
 
 pub struct AircraftPlugin;
 
@@ -28,8 +43,10 @@ impl Plugin for AircraftPlugin {
             RonAssetPlugin::<AircraftType>::new(&["ron"]),
         ))
         .add_event::<AircraftJustSpawned>()
+        .init_resource::<AircraftTypeStore>()
+        .init_resource::<AircraftMeshMaterials>()
         .add_systems(Startup, on_startup)
-        .add_systems(OnEnter(GameState::Loading), setup)
+        .add_systems(OnEnter(GameState::Loading), (setup, setup_aircraft_assets))
         .add_systems(
             Update,
             spawn_aircraft_at_mouse
@@ -77,7 +94,7 @@ fn poll_aircraft_types_loaded(
     match &*aircraft_loading {
         AircraftTypeDataLoadingState::PendingIndex(index_handle) => {
             if let Some(index) = type_index_assets.get(index_handle) {
-                let type_handles: std::collections::HashMap<_, _> = index
+                let type_handles: HashMap<_, _> = index
                     .types
                     .iter()
                     .map(|meta| {
@@ -115,50 +132,31 @@ fn poll_aircraft_types_loaded(
 
 pub fn spawn_aircraft(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
     mut writer: EventWriter<AircraftJustSpawned>,
+    mesh_materials: Res<AircraftMeshMaterials>,
 ) {
+    let aircraft = Aircraft {
+        aircraft_type_id: "a320".to_owned(),
+        call_sign: "Mayday321".to_owned(),
+        cleared_altitude_feet: None,
+        wanted_altitude_feet: 30000.,
+        cleared_heading: Some(Heading::from(30.)),
+        cleared_speed_knots: None,
+        wanted_speed_knots: 350.,
+        heading: Heading::from(30.),
+        heading_change_degrees_per_second: 1.0,
+        speed_knots: 200.,
+        acceleration_knots_per_second: 1.,
+        altitude_feet: 7000.,
+        altitude_change_feet_per_second: 10.,
+        cleared_heading_change_direction: None,
+    };
+
     let entity = commands
-        .spawn((
-            Aircraft {
-                aircraft_type_id: "a320".to_owned(),
-                call_sign: "Mayday321".to_owned(),
-                cleared_altitude_feet: None,
-                wanted_altitude_feet: 30000.,
-                cleared_heading: Some(Heading::from(30.)),
-                cleared_speed_knots: None,
-                wanted_speed_knots: 350.,
-                heading: Heading::from(30.),
-                heading_change_degrees_per_second: 1.0,
-                speed_knots: 200.,
-                acceleration_knots_per_second: 1.,
-                altitude_feet: 7000.,
-                altitude_change_feet_per_second: 10.,
-                cleared_heading_change_direction: None,
-            },
-            Mesh2d(meshes.add(Rectangle {
-                half_size: Vec2::new(5., 5.),
-            })),
-            MeshMaterial2d(materials.add(Color::Srgba(Srgba {
-                red: 0.,
-                green: 0.4,
-                blue: 0.3,
-                alpha: 1.0,
-            }))),
-            Transform::from_xyz(0., 0., 8.0),
-            children![(
-                Mesh2d(meshes.add(Rectangle {
-                    half_size: Vec2::new(20., 1.),
-                })),
-                MeshMaterial2d(materials.add(Color::Srgba(Srgba {
-                    red: 0.,
-                    green: 0.4,
-                    blue: 0.3,
-                    alpha: 1.0,
-                }))),
-                Transform::from_xyz(20., 0., 0.5),
-            ),],
+        .spawn(create_aircraft_bundle(
+            aircraft,
+            Vec2::new(0.0, 0.0),
+            &mesh_materials,
         ))
         .id();
     writer.write(AircraftJustSpawned(entity));
@@ -166,12 +164,11 @@ pub fn spawn_aircraft(
 
 fn spawn_aircraft_at_mouse(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
     mut rng: GlobalEntropy<WyRand>,
     mut writer: EventWriter<AircraftJustSpawned>,
+    mesh_materials: Res<AircraftMeshMaterials>,
 ) {
     let (camera, camera_transform) = &*camera;
     let Some(screen_pos) = window.cursor_position() else {
@@ -190,39 +187,45 @@ fn spawn_aircraft_at_mouse(
 
     let heading = (rng.next_u32() % 360) as f64;
     let altitude_feet = 1000.0 + (rng.next_u32() % 39000) as f64;
+
+    let aircraft = Aircraft {
+        aircraft_type_id: aircraft_type,
+        call_sign,
+        cleared_altitude_feet: None,
+        wanted_altitude_feet: 30000.0,
+        cleared_heading: Some(Heading::from(heading)),
+        cleared_speed_knots: None,
+        wanted_speed_knots: 350.0,
+        heading: Heading::from(heading),
+        heading_change_degrees_per_second: 1.0,
+        speed_knots: 200.0,
+        acceleration_knots_per_second: 1.0,
+        altitude_feet,
+        altitude_change_feet_per_second: 10.0,
+        cleared_heading_change_direction: None,
+    };
+
     let entity = commands
-        .spawn((
-            Aircraft {
-                aircraft_type_id: aircraft_type.to_owned(),
-                call_sign,
-                cleared_altitude_feet: None,
-                wanted_altitude_feet: 30000.,
-                cleared_heading: Some(heading.into()),
-                cleared_speed_knots: None,
-                wanted_speed_knots: 350.,
-                heading: Heading::from(heading),
-                heading_change_degrees_per_second: 1.0,
-                speed_knots: 200.,
-                acceleration_knots_per_second: 1.,
-                altitude_feet,
-                altitude_change_feet_per_second: 10.,
-                cleared_heading_change_direction: None,
-            },
-            Mesh2d(meshes.add(Rectangle {
-                half_size: Vec2::new(5., 5.),
-            })),
-            MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-            Transform::from_xyz(world_pos.x, world_pos.y, Z_AIRCRAFT),
-            children![(
-                Mesh2d(meshes.add(Rectangle {
-                    half_size: Vec2::new(20., 1.),
-                })),
-                MeshMaterial2d(materials.add(Color::Srgba(AIRCRAFT_COLOR))),
-                Transform::from_xyz(20., 0., 0.5),
-            ),],
-        ))
+        .spawn(create_aircraft_bundle(aircraft, world_pos, &mesh_materials))
         .id();
     writer.write(AircraftJustSpawned(entity));
+}
+
+fn create_aircraft_bundle(
+    aircraft: Aircraft,
+    world_pos: Vec2,
+    mesh_materials: &AircraftMeshMaterials,
+) -> impl Bundle {
+    // Setze die initiale Rotation basierend auf dem Heading
+    let rotation_radians = aircraft.heading.to_bevy_rotation() as f32;
+    let rotation = Quat::from_rotation_z(rotation_radians);
+
+    (
+        aircraft,
+        Mesh2d(mesh_materials.mesh.clone()),
+        MeshMaterial2d(mesh_materials.material.clone()),
+        Transform::from_xyz(world_pos.x, world_pos.y, Z_AIRCRAFT).with_rotation(rotation),
+    )
 }
 
 pub fn update_aircrafts(
@@ -277,26 +280,16 @@ pub fn update_aircrafts(
             aircraft.heading_change_degrees_per_second = delta_val_u_per_second;
             if finished_moving {
                 aircraft.heading = wanted;
-                transform.rotation = Quat::from_axis_angle(
-                    Vec3 {
-                        z: -1.,
-                        ..default()
-                    },
-                    wanted.to_rotation() as f32,
-                );
+                let rotation_radians = wanted.to_bevy_rotation() as f32;
+                transform.rotation = Quat::from_rotation_z(rotation_radians);
             }
         }
         if aircraft.heading_change_degrees_per_second != 0. {
             aircraft.heading = aircraft
                 .heading
                 .change(delta_seconds * aircraft.heading_change_degrees_per_second);
-            transform.rotation = Quat::from_axis_angle(
-                Vec3 {
-                    z: -1.,
-                    ..default()
-                },
-                aircraft.heading.to_rotation() as f32,
-            );
+            let rotation_radians = aircraft.heading.to_bevy_rotation() as f32;
+            transform.rotation = Quat::from_rotation_z(rotation_radians);
         }
 
         // speed
@@ -323,14 +316,14 @@ pub fn update_aircrafts(
             }
         }
         aircraft.speed_knots += aircraft.acceleration_knots_per_second * delta_seconds;
-        let (Vec3 { z, .. }, angle) = transform.rotation.to_axis_angle();
-        let angle = z * angle;
-        let Vec2 {
-            x: x_part,
-            y: y_part,
-        } = Vec2::from_angle(angle);
-        transform.translation.x += (aircraft.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * x_part;
-        transform.translation.y += (aircraft.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32 * y_part;
+
+        // Move Aircraft in x-y plane
+        let heading_radians = aircraft.heading.to_bevy_rotation() as f32;
+
+        let movement_distance =
+            (aircraft.speed_knots * delta_seconds * PIXEL_PER_KNOT_SECOND) as f32;
+
+        transform.translation += Vec2::from_angle(heading_radians).extend(0.) * movement_distance;
 
         // altitude
         let wanted = aircraft
@@ -438,6 +431,100 @@ pub fn required_heading_change(
     }
 }
 
+fn setup_aircraft_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let combined_mesh = create_combined_aircraft_mesh();
+    let mesh_handle = meshes.add(combined_mesh);
+
+    let material_handle = materials.add(ColorMaterial::from(Color::Srgba(AIRCRAFT_COLOR)));
+
+    commands.insert_resource(AircraftMeshMaterials {
+        mesh: mesh_handle,
+        material: material_handle,
+    });
+}
+
+fn create_combined_aircraft_mesh() -> Mesh {
+    use bevy::render::mesh::{Indices, PrimitiveTopology};
+    let direction_start_x = AIRCRAFT_MESH_MAIN_HALF_SIZE;
+    let direction_end_x = direction_start_x + AIRCRAFT_MESH_DIRECTION_LENGTH;
+
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+
+    // Square
+    positions.extend_from_slice(&[
+        [
+            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            0.0,
+        ], // 0: bottom left
+        [
+            AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            0.0,
+        ], // 1: bottom right
+        [
+            AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            0.0,
+        ], // 2: top right
+        [
+            -AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            AIRCRAFT_MESH_MAIN_HALF_SIZE,
+            0.0,
+        ], // 3: top left
+    ]);
+    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    let direction_start_index = positions.len() as u32;
+    positions.extend_from_slice(&[
+        [
+            direction_start_x,
+            -AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
+            0.0,
+        ], // 4: bottom left
+        [
+            direction_end_x,
+            -AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
+            0.0,
+        ], // 5: bottom right
+        [
+            direction_end_x,
+            AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
+            0.0,
+        ], // 6: top right
+        [
+            direction_start_x,
+            AIRCRAFT_MESH_DIRECTION_WIDTH_HALF_SIZE,
+            0.0,
+        ], // 7: top left
+    ]);
+
+    // Direction indicator
+    indices.extend_from_slice(&[
+        direction_start_index,     // 4: bottom left
+        direction_start_index + 1, // 5: bottom right
+        direction_start_index + 2, // 6: top right
+        direction_start_index,     // 4: bottom left
+        direction_start_index + 2, // 6: top right
+        direction_start_index + 3, // 7: top left
+    ]);
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD
+            | bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_indices(Indices::U32(indices));
+
+    mesh
+}
+
 #[derive(Debug, Clone, Resource)]
 pub enum AircraftTypeDataLoadingState {
     PendingIndex(Handle<AircraftTypeIndexFile>),
@@ -511,9 +598,6 @@ const AIRCRAFT_COLOR: Srgba = Srgba {
 pub enum AircraftCharacteristic {
     Heavy,
 }
-
-#[derive(Resource)]
-pub struct AircraftTypeStore(pub std::collections::HashMap<String, Handle<AircraftType>>);
 
 #[derive(Clone, Debug, Event)]
 pub struct AircraftJustSpawned(pub Entity);
