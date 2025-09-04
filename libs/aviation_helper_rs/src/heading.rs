@@ -37,6 +37,7 @@ impl Add<f64> for Heading {
         Heading((self.0 + rhs).rem_euclid(360.))
     }
 }
+
 impl Sub<f64> for Heading {
     type Output = Heading;
 
