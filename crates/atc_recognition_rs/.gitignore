@@ -1,4 +1,9 @@
-resources/models/*
-!resources/model/*/
+# Individual model files are ignored, but submodule directories are allowed
+resources/models/*.bin
+resources/models/*.ggml
+resources/models/*.pt
+resources/models/*.pth
+# Allow submodule directories
+!resources/models/*/
 target/
 resources/datasets/
