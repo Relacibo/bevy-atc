@@ -461,7 +461,7 @@ pub fn required_heading_change(
                 diff
             }
         }
-        None => diff,
+        _ => diff,
     }
 }
 
