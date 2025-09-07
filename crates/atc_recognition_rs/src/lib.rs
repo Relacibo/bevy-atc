@@ -3,12 +3,16 @@
 //! A library for recognizing aviation commands from voice input using Whisper
 //! and parsing them into structured aviation command types.
 
+use std::path::Path;
+
 use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
 pub mod errors;
 pub mod parser;
 pub mod recognition;
 pub mod speech_to_text;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 pub use errors::Error;
 pub use parser::{
@@ -37,21 +41,21 @@ pub fn create_resampler(sample_rate_in: u32) -> SincFixedIn<f32> {
 
 /// Configuration for voice recognition
 #[derive(Debug, Clone)]
-pub struct RecognitionConfig {
-    pub model_path: &'static str,
+pub struct SpeechToTextConfig {
+    pub model_path: &'static Path,
     pub window_len_seconds: u32,
     pub check_interval_ms: u64,
     pub probability_threshold: f32,
     pub max_snippet_len_seconds: f32,
 }
 
-impl Default for RecognitionConfig {
+impl Default for SpeechToTextConfig {
     fn default() -> Self {
         Self {
-            model_path: concat!(
+            model_path: Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/resources/models/whisper-small.en-atc-experiment/whisper-atc-q8_0.bin"
-            ),
+            )),
             window_len_seconds: 20,
             check_interval_ms: 3000,
             probability_threshold: 0.95,

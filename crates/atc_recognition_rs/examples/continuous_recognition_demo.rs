@@ -9,18 +9,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-use atc_recognition_rs::{RecognitionConfig, VoiceRecognizer};
+use atc_recognition_rs::{Error, SpeechToTextConfig, SpeechToText, VoiceRecognizer};
 use aviation_helper_rs::{
     clearance::{airlines::Airlines, aviation_command::AviationCommandPart},
     types::altitude::Altitude,
 };
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🛩️  ATC Voice Recognition - Continuous Mode Demo");
     println!("==============================================\n");
 
     // Create configuration for voice recognition
-    let config = RecognitionConfig::default();
+    let config = SpeechToTextConfig::default();
 
     // Load airlines database
     let airlines = Airlines::load_airlines_from_file().expect("Failed to load airlines database");
@@ -315,4 +316,83 @@ fn get_user_choice() -> Result<u32, Box<dyn std::error::Error>> {
     std::io::stdin().read_line(&mut input)?;
 
     Ok(input.trim().parse().unwrap_or(1))
+}
+
+/// Capture audio from microphone for a specified duration and return the samples
+/// This is the foundation for real single-command recognition
+fn capture_audio_samples(
+    speech_to_text: &SpeechToText,
+    duration_seconds: f32,
+) -> Result<Vec<f32>, Error> {
+    println!("🎤 Capturing audio for {:.1} seconds...", duration_seconds);
+
+    let cpal_host = cpal::default_host();
+    let input_device = cpal_host
+        .default_input_device()
+        .ok_or(Error::FailedToFindDefaultInputDevice)?;
+
+    let config: cpal::StreamConfig = input_device.default_input_config()?.into();
+    let sample_rate_in = config.sample_rate.0;
+    let channel_count_in = config.channels;
+
+    // Calculate target sample count
+    let target_samples = (SAMPLE_RATE_HZ as f32 * duration_seconds) as usize;
+    let captured_samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(target_samples)));
+    let samples_clone = captured_samples.clone();
+
+    let resample_buffer: Arc<Mutex<[Vec<f32>; 1]>> = Arc::new(Mutex::new([vec![]]));
+
+    let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
+        let Ok(mut rb) = resample_buffer.lock() else {
+            eprintln!("Could not lock mutex");
+            return;
+        };
+        rb[0].clear();
+
+        let data2 = if sample_rate_in != SAMPLE_RATE_HZ {
+            let mut resampler = create_resampler(sample_rate_in);
+
+            let expected_output_len = ((data.len() as f64 / channel_count_in as f64)
+                * (SAMPLE_RATE_HZ as f64 / sample_rate_in as f64))
+                .ceil() as usize;
+            rb[0].resize(expected_output_len, 0.0);
+
+            if let Err(err) = resampler.process_into_buffer(
+                &[data
+                    .chunks(channel_count_in as usize)
+                    .map(|frame| frame[0])
+                    .collect::<Vec<_>>()],
+                rb.as_mut_slice(),
+                None,
+            ) {
+                eprintln!("Rubato resampling failed: {:?}", err);
+                return;
+            }
+            &rb[0][..]
+        } else {
+            data
+        };
+
+        // Add samples to our capture buffer
+        let mut samples = samples_clone.lock().unwrap();
+        for &sample in data2 {
+            if samples.len() < target_samples {
+                samples.push(sample);
+            }
+        }
+    };
+
+    let input_stream = input_device.build_input_stream(&config, input_data_fn, err_fn, None)?;
+    input_stream.play()?;
+
+    // Record for the specified duration
+    thread::sleep(Duration::from_millis((duration_seconds * 1000.0) as u64));
+
+    // Stop recording
+    drop(input_stream);
+
+    let samples = captured_samples.lock().unwrap().clone();
+    println!("🎵 Captured {} audio samples", samples.len());
+
+    Ok(samples)
 }

@@ -16,7 +16,7 @@ use ringbuf::{
 };
 use rubato::Resampler;
 
-use crate::{AviationCommandParser, Error, RecognitionConfig, SpeechToText, create_resampler};
+use crate::{AviationCommandParser, Error, SpeechToTextConfig, SpeechToText, create_resampler};
 use aviation_helper_rs::clearance::{airlines::Airlines, aviation_command::AviationCommandPart};
 
 const SAMPLE_RATE_HZ: u32 = 16000;
@@ -24,13 +24,13 @@ const SAMPLE_RATE_HZ: u32 = 16000;
 /// Voice recognizer that captures audio and converts it to aviation commands
 /// This is the main orchestrator that combines speech-to-text and command parsing
 pub struct VoiceRecognizer {
-    config: RecognitionConfig,
+    config: SpeechToTextConfig,
     speech_to_text: SpeechToText,
     parser: AviationCommandParser,
 }
 
 impl VoiceRecognizer {
-    pub fn new(config: RecognitionConfig, airlines: Airlines) -> Result<Self, Error> {
+    pub fn new(config: SpeechToTextConfig, airlines: Airlines) -> Result<Self, Error> {
         let speech_to_text = SpeechToText::new(config.clone())?;
         let parser = AviationCommandParser::new(airlines);
 
@@ -49,129 +49,6 @@ impl VoiceRecognizer {
     /// Get a reference to the command parser component
     pub fn parser(&self) -> &AviationCommandParser {
         &self.parser
-    }
-
-    /// Perform a single voice recognition and return the parsed command
-    /// This method captures live audio from the microphone, transcribes it, and parses it
-    pub fn recognize_single_command(&self) -> Result<Option<AviationCommandPart>, Error> {
-        println!("Starting single voice recognition...");
-        
-        // TODO: Implement live microphone capture for single command
-        // For now, we use the test simulation until live audio capture is implemented
-        // This should be replaced with actual microphone recording and transcription
-        
-        // Temporary test simulation (should be removed when live capture is ready)
-        todo!()
-    }
-    
-    /// Capture audio from microphone for a specified duration and return the samples
-    /// This is the foundation for real single-command recognition
-    pub fn capture_audio_samples(&self, duration_seconds: f32) -> Result<Vec<f32>, Error> {
-        println!("🎤 Capturing audio for {:.1} seconds...", duration_seconds);
-        
-        let cpal_host = cpal::default_host();
-        let input_device = cpal_host
-            .default_input_device()
-            .ok_or(Error::FailedToFindDefaultInputDevice)?;
-            
-        let config: cpal::StreamConfig = input_device.default_input_config()?.into();
-        let sample_rate_in = config.sample_rate.0;
-        let channel_count_in = config.channels;
-        
-        // Calculate target sample count
-        let target_samples = (SAMPLE_RATE_HZ as f32 * duration_seconds) as usize;
-        let captured_samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(target_samples)));
-        let samples_clone = captured_samples.clone();
-        
-        let resample_buffer: Arc<Mutex<[Vec<f32>; 1]>> = Arc::new(Mutex::new([vec![]]));
-        
-        let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            let Ok(mut rb) = resample_buffer.lock() else {
-                eprintln!("Could not lock mutex");
-                return;
-            };
-            rb[0].clear();
-
-            let data2 = if sample_rate_in != SAMPLE_RATE_HZ {
-                let mut resampler = create_resampler(sample_rate_in);
-
-                let expected_output_len = ((data.len() as f64 / channel_count_in as f64)
-                    * (SAMPLE_RATE_HZ as f64 / sample_rate_in as f64))
-                    .ceil() as usize;
-                rb[0].resize(expected_output_len, 0.0);
-
-                if let Err(err) = resampler.process_into_buffer(
-                    &[data
-                        .chunks(channel_count_in as usize)
-                        .map(|frame| frame[0])
-                        .collect::<Vec<_>>()],
-                    rb.as_mut_slice(),
-                    None,
-                ) {
-                    eprintln!("Rubato resampling failed: {:?}", err);
-                    return;
-                }
-                &rb[0][..]
-            } else {
-                data
-            };
-            
-            // Add samples to our capture buffer
-            let mut samples = samples_clone.lock().unwrap();
-            for &sample in data2 {
-                if samples.len() < target_samples {
-                    samples.push(sample);
-                }
-            }
-        };
-        
-        let input_stream = input_device.build_input_stream(&config, input_data_fn, err_fn, None)?;
-        input_stream.play()?;
-        
-        // Record for the specified duration
-        thread::sleep(Duration::from_millis((duration_seconds * 1000.0) as u64));
-        
-        // Stop recording
-        drop(input_stream);
-        
-        let samples = captured_samples.lock().unwrap().clone();
-        println!("🎵 Captured {} audio samples", samples.len());
-        
-        Ok(samples)
-    }
-    
-    /// Perform real single voice recognition with live microphone capture
-    /// This is the proper implementation that should replace the test simulation
-    pub fn recognize_single_command_live(&self, duration_seconds: f32) -> Result<Option<AviationCommandPart>, Error> {
-        println!("🎙️  Starting LIVE voice recognition for {:.1} seconds...", duration_seconds);
-        
-        // Capture audio from microphone
-        let audio_samples = self.capture_audio_samples(duration_seconds)?;
-        
-        if audio_samples.is_empty() {
-            println!("⚠️  No audio captured");
-            return Ok(None);
-        }
-        
-        // Use speech-to-text component for transcription
-        let transcribed_text = self.speech_to_text.transcribe(&audio_samples)?;
-        
-        if transcribed_text.is_empty() {
-            println!("⚠️  No text transcribed from audio");
-            return Ok(None);
-        }
-        
-        println!("🎯 Transcribed: '{}'", transcribed_text);
-        
-        // Parse the transcribed text
-        let parsed_command = self.parser.parse(&transcribed_text);
-        if let Some(ref command) = parsed_command {
-            println!("✅ Parsed aviation command: {:?}", command);
-        } else {
-            println!("❌ Could not parse '{}' as aviation command", transcribed_text);
-        }
-        
-        Ok(parsed_command)
     }
 
     /// Start continuous voice recognition with a callback for each recognized command
@@ -321,7 +198,7 @@ impl VoiceRecognizer {
         println!("Processing {} audio samples", samples.len());
 
         // Use the speech-to-text component for transcription
-        let transcribed_text = self.speech_to_text.transcribe(samples)?;
+        let transcribed_text = self.speech_to_text.transcribe_with_whisper(samples)?;
 
         println!("Transcribed text: '{}'", transcribed_text);
 
@@ -338,28 +215,4 @@ impl VoiceRecognizer {
 
 fn err_fn(err: cpal::StreamError) {
     eprintln!("Audio stream error: {}", err);
-}
-
-/// Test utilities for WAV file processing
-/// Available only when testing feature is enabled
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils {
-    use super::*;
-    use crate::speech_to_text::test_utils as stt_utils;
-
-    /// Read and process a WAV file, returning the audio samples
-    /// This function is only available for tests
-    pub fn read_wav_file(wav_path: &str) -> Result<Vec<f32>, Error> {
-        stt_utils::read_wav_file(wav_path)
-    }
-
-    /// Process a WAV file and return the recognized text and parsed commands
-    /// This function is only available for tests
-    pub fn process_wav_file_for_test(
-        recognizer: &VoiceRecognizer,
-        wav_path: &str,
-    ) -> Result<(String, Option<crate::parser::ParsedCommand>), Error> {
-        let samples = read_wav_file(wav_path)?;
-        recognizer.process_audio_samples(&samples)
-    }
 }

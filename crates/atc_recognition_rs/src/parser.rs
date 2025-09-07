@@ -534,8 +534,8 @@ impl AviationCommandParser {
             // Make sure we don't go past another command keyword (except for allowed multi-word commands)
             if !is_multi_word_command {
                 let mut has_intermediate_keyword = false;
-                for i in (start_index + 1)..end_index {
-                    if command_keywords.contains(&words[i].to_lowercase().as_str()) {
+                for word in words {
+                    if command_keywords.contains(&word.to_lowercase().as_str()) {
                         has_intermediate_keyword = true;
                         break;
                     }
