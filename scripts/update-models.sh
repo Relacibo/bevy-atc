@@ -1,13 +1,22 @@
 #!/bin/bash
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 echo "🔄 Updating Bevy ATC Models"
 echo "==========================="
+echo "Project root: $PROJECT_ROOT"
 
-MODELS_DIR="crates/atc_recognition_rs/resources/models/whisper-small.en-atc-experiment"
+# Change to project root directory
+cd "$PROJECT_ROOT"
+
+MODELS_DIR="$PROJECT_ROOT/crates/atc_recognition_rs/resources/models/whisper-small.en-atc-experiment"
 
 if [ ! -d "$MODELS_DIR" ]; then
     echo "❌ Error: Models directory not found. Run setup.sh first."
+    echo "Expected: $MODELS_DIR"
     exit 1
 fi
 
@@ -21,7 +30,7 @@ git pull origin main
 echo "📥 Downloading latest model files..."
 git lfs pull --include="whisper-atc-q8_0.bin"
 
-cd - > /dev/null
+cd "$PROJECT_ROOT"
 
 # Update submodule reference in main repo
 echo "📝 Updating submodule reference..."
