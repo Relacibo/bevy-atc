@@ -10,6 +10,8 @@ members = ["crates/*"]
 aviation-helper-rs = { path = "crates/aviation_helper_rs" }
 atc-recognition-rs = { path = "crates/atc_recognition_rs" }
 serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0"
+ron = "0.11.0"
 
 [dependencies]
 anyhow = "1.0"
@@ -22,7 +24,7 @@ bevy_ui_text_input = { git = "https://github.com/ickshonpe/bevy_ui_text_input.gi
 bevy_simple_scroll_view = "0.4"
 env_logger = "0.11"
 strum = { version = "0.27", features = ["derive"] }
-ron = "0.11.0"
+ron = { workspace = true }
 bevy_common_assets = { version = "0.13.0", features = ["ron"] }
 serde = { workspace = true }
 aviation-helper-rs = { workspace = true }

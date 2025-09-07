@@ -1,2 +1,4 @@
-resources/models/
+resources/models/*
+!resources/model/*/
 target/
+resources/datasets/

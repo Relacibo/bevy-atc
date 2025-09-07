@@ -3,4 +3,10 @@ name = "aviation-helper-rs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+fs = []
+
 [dependencies]
+serde = { workspace = true }
+serde_json = "1.0"
+thiserror = { workspace = true }

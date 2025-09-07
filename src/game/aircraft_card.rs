@@ -1,6 +1,6 @@
 use crate::game::aircraft::AircraftJustSpawned;
 use crate::game::run_conditions::was_mouse_wheel_used;
-use aviation_helper_rs::heading::Heading;
+use aviation_helper_rs::types::heading::Heading;
 use bevy::ecs::component::Component;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};

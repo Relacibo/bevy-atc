@@ -2,3 +2,29 @@ target/
 dist/
 **/node_modules/
 
+# Training artifacts and models
+**/resources/models/*.bin
+**/resources/models/whisper.cpp/
+**/resources/models/atc-custom/
+**/resources/models/training/
+**/tools/output/
+**/tools/whisper.cpp/
+**/tools/training_logs/
+
+# Python cache and environments
+**/__pycache__/
+*.pyc
+*.pyo
+**/venv/
+**/.venv/
+**/env/
+
+# Training outputs
+**/tensorboard/
+**/logs/
+**/checkpoints/
+
+# Keep configuration files
+!**/resources/models/README.md
+!**/resources/models/model_config.json
+!**/resources/datasets/README.md

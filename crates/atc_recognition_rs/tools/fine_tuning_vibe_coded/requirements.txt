@@ -1,0 +1,21 @@
+# Python requirements for ATC Whisper fine-tuning tools
+# Note: PyTorch with ROCm support will be installed separately by setup.sh
+# For manual installation: pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm5.6
+
+torch>=2.0.0
+torchaudio>=2.0.0
+transformers[torch]>=4.30.0
+datasets>=2.12.0
+accelerate>=0.20.0
+evaluate>=0.4.0
+jiwer>=3.0.0
+# autotrain-advanced>=0.6.0  # Temporarily disabled due to compatibility issues with Python 3.13
+pandas>=1.5.0
+numpy>=1.24.0
+tensorboard>=2.13.0
+librosa>=0.10.0
+soundfile>=0.12.0
+openai-whisper>=20250625  # Official OpenAI Whisper Python package
+pyarrow>=12.0.0  # For Parquet support (ATC-ASR-Dataset)
+fastparquet>=0.8.0  # Alternative Parquet reader
+# torchcodec>=0.6.0  # Disabled due to FFmpeg compatibility issues with ROCm

@@ -1,4 +1,4 @@
-use aviation_helper_rs::clearance::turn_direction::TurnDirection;
+use aviation_helper_rs::types::heading::{Heading, TurnDirection};
 use bevy::asset::Asset;
 use bevy::dev_tools::states::log_transitions;
 use bevy::input::common_conditions::input_just_pressed;
@@ -16,7 +16,6 @@ use crate::APP_CONFIG;
 use crate::game::loading::{PendingLoadingPlugins, PluginLoadingFinishedEvent};
 use crate::game::{GameState, Z_AIRCRAFT};
 use crate::util::consts::PIXEL_PER_KNOT_SECOND;
-use aviation_helper_rs::heading::Heading;
 
 #[derive(Resource, Default)]
 pub struct AircraftTypeStore(pub HashMap<String, Handle<AircraftType>>);

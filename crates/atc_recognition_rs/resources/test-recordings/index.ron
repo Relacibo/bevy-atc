@@ -1,0 +1,37 @@
+(
+  entries: {
+    "delta": (
+      command: AviationCommandGroup (
+        target: Some(Aircraft ( full_name: "DAL4130" )),
+        parts: [
+          FlyHeading(heading: Heading(325.0), turn_direction: None)
+        ]
+      ),
+      text: "delta 4130 fly heading 325", 
+      file_name: "delta.wav"
+    ),
+    "easyjet": (
+      command: AviationCommandGroup (
+        target: Some(Aircraft ( full_name: "EZY2902" )),
+        parts: [
+          ChangeAltitude ( altitude: FlightLevel(250), turn_direction: Some(Climb) ),
+          FlyHeading( heading: Heading(320.0), turn_direction: Some(Left) )
+        ]
+      ),
+      text: "easyjet 2902 climb and maintain flight level 250 and turn left heading 320", 
+      file_name: "easyjet.wav"
+    ),
+    "lufthansa_cargo": (
+      command: AviationCommandGroup (
+        target: Some(Aircraft ( full_name: "GEC990321" )),
+        parts: [
+          RadarContact,
+          ChangeAltitude( altitude: Feet(3000), turn_direction: None ),
+          FlyHeading( heading: Heading(90.0), turn_direction: None )
+        ]
+      ),
+      text: "lufthansa cargo 990321 radar contact maintain 3000 feet fly heading 090", 
+      file_name: "lufthansa_cargo.wav"
+    ),
+  }
+)

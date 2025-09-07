@@ -1,12 +1,25 @@
 use std::{
     fmt::Display,
-    ops::{Add, Sub},
+    ops::{Add, Deref, Sub},
 };
+
+use serde::{Deserialize, Serialize};
 
 use crate::conversions::{aviation_degrees_to_bevy_rotation, bevy_rotation_to_aviation_degrees};
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct Heading(f64);
+
+// Custom Eq implementation for test comparisons
+// Considers headings equal if they're within 0.1 degrees
+impl Eq for Heading {}
+
+impl PartialEq<f64> for Heading {
+    fn eq(&self, other: &f64) -> bool {
+        (self.0 - other).abs() < 0.1
+    }
+}
 
 impl From<f64> for Heading {
     fn from(value: f64) -> Self {
@@ -47,6 +60,10 @@ impl Sub<f64> for Heading {
 }
 
 impl Heading {
+    pub fn new(val: f64) -> Self {
+        Heading(val.rem_euclid(360.))
+    }
+
     pub fn to_bevy_rotation(self) -> f64 {
         let Heading(heading) = self;
         aviation_degrees_to_bevy_rotation(heading)
@@ -78,5 +95,44 @@ impl Display for Heading {
             n => n as i32,
         };
         write!(f, "{num:03}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum CardinalDirection {
+    South,
+    SouthWest,
+    West,
+    NorthWest,
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub enum TurnDirection {
+    Stay,
+    Left,
+    Right,
+}
+
+/// Wrapper for degrees that implements Eq for test comparisons  
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct Degrees(pub f64);
+
+impl Eq for Degrees {}
+
+impl From<f64> for Degrees {
+    fn from(value: f64) -> Self {
+        Degrees(value)
+    }
+}
+
+impl Deref for Degrees {
+    type Target = f64;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
