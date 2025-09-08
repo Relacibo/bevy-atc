@@ -7,7 +7,10 @@
           FlyHeading(heading: Heading(325.0), turn_direction: None)
         ]
       ),
-      text: "delta 4130 fly heading 325", 
+      strings: [
+        "delta 4130 fly heading 325",
+        "delta 4130 flyheading 325"
+      ], 
       file_name: "delta.wav"
     ),
     "easyjet": (
@@ -18,7 +21,7 @@
           FlyHeading( heading: Heading(320.0), turn_direction: Some(Left) )
         ]
       ),
-      text: "easyjet 2902 climb and maintain flight level 250 and turn left heading 320", 
+      strings: ["easyjet 2902 climb and maintain flight level 250 and turn left heading 320"], 
       file_name: "easyjet.wav"
     ),
     "lufthansa_cargo": (
@@ -30,7 +33,10 @@
           FlyHeading( heading: Heading(90.0), turn_direction: None )
         ]
       ),
-      text: "lufthansa cargo 990321 radar contact maintain 3000 feet fly heading 090", 
+      strings: [
+        "lufthansa cargo 990321 radar contact maintain 3000 feet fly heading 090",
+        "lufthansa cargo 990321 radar contact maintained 3000 feet flyheading 090"
+      ], 
       file_name: "lufthansa_cargo.wav"
     ),
   }

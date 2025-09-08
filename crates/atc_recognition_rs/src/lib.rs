@@ -9,7 +9,8 @@ use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, Wi
 
 pub mod errors;
 pub mod parser;
-pub mod recognition;
+pub mod graph_parser;
+// pub mod recognition;
 pub mod speech_to_text;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -18,7 +19,9 @@ pub use errors::Error;
 pub use parser::{
     AviationCommandParser, CallsignMatch, CommandWithConfidence, ParseResult, ParsedCommand,
 };
-pub use recognition::VoiceRecognizer;
+pub use graph_parser::{
+    GraphParser, GraphParseResult, GraphParsedCommand, GraphCommandWithConfidence,
+};
 pub use speech_to_text::SpeechToText;
 
 // Re-export specific aviation command types for convenience
@@ -43,10 +46,6 @@ pub fn create_resampler(sample_rate_in: u32) -> SincFixedIn<f32> {
 #[derive(Debug, Clone)]
 pub struct SpeechToTextConfig {
     pub model_path: &'static Path,
-    pub window_len_seconds: u32,
-    pub check_interval_ms: u64,
-    pub probability_threshold: f32,
-    pub max_snippet_len_seconds: f32,
 }
 
 impl Default for SpeechToTextConfig {
@@ -54,12 +53,8 @@ impl Default for SpeechToTextConfig {
         Self {
             model_path: Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/resources/models/whisper-small.en-atc-experiment/whisper-atc-q8_0.bin"
+                "/resources/models/whisper.cpp/ggml-medium.en-q5_0.bin"
             )),
-            window_len_seconds: 20,
-            check_interval_ms: 3000,
-            probability_threshold: 0.95,
-            max_snippet_len_seconds: 17.0,
         }
     }
 }
