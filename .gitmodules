@@ -1,6 +1,9 @@
 [submodule "crates/atc_recognition_rs/resources/models/whisper-small.en-atc-experiment"]
 	path = crates/atc_recognition_rs/resources/models/whisper-small.en-atc-experiment
 	url = https://huggingface.co/Relacibo/whisper-small.en-atc-experiment
+[submodule "crates/atc_recognition_rs/resources/models/whisper.cpp"]
+	path = crates/atc_recognition_rs/resources/models/whisper.cpp
+	url = https://huggingface.co/ggerganov/whisper.cpp
 [submodule "tools/whisper.cpp"]
 	path = tools/whisper.cpp
 	url = https://github.com/ggml-org/whisper.cpp

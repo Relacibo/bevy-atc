@@ -59,17 +59,7 @@ impl SpeechToText {
             };
             result.push_str(segment_text);
         }
-        let result = post_process_command(result);
         // Trim whitespace and return
         Ok(result)
     }
-}
-
-fn post_process_command(command: impl AsRef<str>) -> String {
-    let ret: String = command.as_ref().trim().to_owned();
-    ret.to_lowercase()
-        .replace(".", "")
-        .replace(",", "")
-        .replace("!", "")
-        .replace("?", "")
 }
