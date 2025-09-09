@@ -12,25 +12,26 @@ use aviation_helper_rs::{
         heading::{Degrees, Heading, TurnDirection},
     },
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 pub enum ParseState {
     Start,
     ExpectingCallsign,
     ExpectingCommand,
-    
+
     // Command-specific states
     TurnCommand,
-    ExpectingDirection,      // left/right
-    ExpectingHeading,        // after "heading"
+    ExpectingDirection, // left/right
+    ExpectingHeading,   // after "heading"
     ClimbCommand,
     DescendCommand,
-    ExpectingAltitude,       // flight level / feet
+    ExpectingAltitude, // flight level / feet
     ContactCommand,
     ExpectingFrequency,
-    ExpectingStation,        // tower/ground/approach
-    
+    ExpectingStation, // tower/ground/approach
+
     // Terminal states
     CommandComplete,
     ParseComplete,
@@ -47,13 +48,13 @@ pub struct ParseEdge {
 
 #[derive(Debug, Clone)]
 pub enum TokenMatcher {
-    Exact(String),                    // "turn"
-    OneOf(Vec<String>),              // ["left", "right"]
-    Number(NumberType),               // heading degrees, altitude
-    Airline,                         // matches against airline DB
-    Pattern(String),                 // regex as fallback
-    Fuzzy(String, f32),              // fuzzy match with threshold
-    Optional(Box<TokenMatcher>),     // optional token
+    Exact(String),               // "turn"
+    OneOf(Vec<String>),          // ["left", "right"]
+    Number(NumberType),          // heading degrees, altitude
+    Airline,                     // matches against airline DB
+    Pattern(String),             // regex as fallback
+    Fuzzy(String, f32),          // fuzzy match with threshold
+    Optional(Box<TokenMatcher>), // optional token
 }
 
 #[derive(Debug, Clone)]
@@ -121,199 +122,310 @@ enum ParsedValue {
 
 pub struct GraphParser {
     edges: Vec<ParseEdge>,
-    airlines: Airlines,
     number_words: HashMap<String, u32>,
     direction_words: HashMap<String, TurnDirection>,
     altitude_words: HashMap<String, VerticalDirection>,
     phonetic_alphabet: HashMap<String, String>,
     airline_name_to_icao: HashMap<String, String>,
     callsign_to_icao: HashMap<String, String>,
+    recognition_corrections: HashMap<String, String>,
+    fuzzy_threshold: f32,
+    confidence_threshold: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ParserConfig {
+    pub recognition_corrections: HashMap<String, String>,
+    pub number_words: HashMap<String, u32>,
+    pub direction_words: HashMap<String, TurnDirection>,
+    pub altitude_words: HashMap<String, VerticalDirection>,
+    pub phonetic_alphabet: HashMap<String, String>,
+    pub fuzzy_threshold: f32,
+    pub confidence_threshold: f32,
+}
+
+impl ParserConfig {
+    /// Load parser configuration from a RON file
+    pub fn load_from_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let contents = std::fs::read_to_string(path)?;
+        let config: ParserConfig = ron::from_str(&contents)?;
+        Ok(config)
+    }
+
+    /// Load parser configuration from the default location
+    pub fn load_default() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::load_from_file("resources/parser/parser_config.ron")
+    }
 }
 
 impl GraphParser {
-    pub fn new(airlines: Airlines) -> Self {
+    pub fn new(config: ParserConfig, airlines: &Airlines) -> Self {
+        let ParserConfig {
+            recognition_corrections,
+            number_words,
+            direction_words,
+            altitude_words,
+            phonetic_alphabet,
+            fuzzy_threshold,
+            confidence_threshold,
+        } = config;
+
+        let (airline_name_to_icao, callsign_to_icao) = load_airlines(airlines);
+
         let mut parser = Self {
             edges: Vec::new(),
-            airlines: airlines.clone(),
-            number_words: HashMap::new(),
-            direction_words: HashMap::new(),
-            altitude_words: HashMap::new(),
-            phonetic_alphabet: HashMap::new(),
-            airline_name_to_icao: HashMap::new(),
-            callsign_to_icao: HashMap::new(),
+            number_words,
+            direction_words,
+            altitude_words,
+            phonetic_alphabet,
+            airline_name_to_icao,
+            callsign_to_icao,
+            recognition_corrections,
+            fuzzy_threshold,
+            confidence_threshold,
         };
-        
-        parser.initialize_word_mappings();
-        parser.load_airlines(airlines);
+
         parser.build_graph();
         parser
     }
 
-    fn initialize_word_mappings(&mut self) {
-        // Numbers 0-9 for spoken digits
-        let numbers = [
-            ("zero", 0), ("one", 1), ("two", 2), ("three", 3), ("four", 4),
-            ("five", 5), ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9),
-            ("niner", 9), ("tree", 3), ("fife", 5),
-            ("0", 0), ("1", 1), ("2", 2), ("3", 3), ("4", 4),
-            ("5", 5), ("6", 6), ("7", 7), ("8", 8), ("9", 9),
-        ];
-
-        for (word, num) in numbers {
-            self.number_words.insert(word.to_string(), num);
-        }
-
-        // Direction words
-        self.direction_words.insert("left".to_string(), TurnDirection::Left);
-        self.direction_words.insert("right".to_string(), TurnDirection::Right);
-
-        // Altitude direction words
-        self.altitude_words.insert("climb".to_string(), VerticalDirection::Climb);
-        self.altitude_words.insert("descend".to_string(), VerticalDirection::Descend);
-        self.altitude_words.insert("descent".to_string(), VerticalDirection::Descend);
-
-        // Phonetic alphabet
-        let phonetic_alphabet = [
-            ("alpha", "A"), ("bravo", "B"), ("charlie", "C"), ("delta", "D"),
-            ("echo", "E"), ("foxtrot", "F"), ("golf", "G"), ("hotel", "H"),
-            ("india", "I"), ("juliet", "J"), ("kilo", "K"), ("lima", "L"),
-            ("mike", "M"), ("november", "N"), ("oscar", "O"), ("papa", "P"),
-            ("quebec", "Q"), ("romeo", "R"), ("sierra", "S"), ("tango", "T"),
-            ("uniform", "U"), ("victor", "V"), ("whiskey", "W"), ("xray", "X"),
-            ("yankee", "Y"), ("zulu", "Z"),
-        ];
-
-        for (phonetic, letter) in phonetic_alphabet {
-            self.phonetic_alphabet.insert(phonetic.to_string(), letter.to_string());
-        }
-    }
-
-    fn load_airlines(&mut self, airlines: Airlines) {
-        self.callsign_to_icao.clear();
-        self.airline_name_to_icao.clear();
-
-        for airline in &airlines.0 {
-            let Some(icao) = &airline.icao else { continue; };
-            if !airline.active || icao.is_empty() || icao == "N/A" {
-                continue;
-            }
-            let icao_lower = icao.to_lowercase();
-
-            // Primary: Map callsign to ICAO
-            if let Some(callsign) = &airline.callsign {
-                if !callsign.is_empty() {
-                    let callsign_key = callsign.to_lowercase().replace(" ", "");
-                    self.callsign_to_icao.insert(callsign_key, icao_lower.clone());
-                }
-            }
-
-            // Fallback: Map airline name to ICAO
-            if !airline.name.is_empty() {
-                let name_key = airline.name.to_lowercase().replace(" ", "");
-                if !self.callsign_to_icao.contains_key(&name_key) {
-                    self.airline_name_to_icao.insert(name_key, icao_lower.clone());
-                }
-            }
-        }
-    }
-
     fn build_graph(&mut self) {
         // 1. Callsign parsing
-        self.add_edge(ParseState::Start, ParseState::ExpectingCallsign, 
-                     TokenMatcher::Airline, 0.9, true);
+        self.add_edge(
+            ParseState::Start,
+            ParseState::ExpectingCallsign,
+            TokenMatcher::Airline,
+            0.9,
+            true,
+        );
 
         // After callsign, expect command
-        self.add_edge(ParseState::ExpectingCallsign, ParseState::ExpectingCommand,
-                     TokenMatcher::Optional(Box::new(TokenMatcher::Exact(",".into()))), 0.8, true);
+        self.add_edge(
+            ParseState::ExpectingCallsign,
+            ParseState::ExpectingCommand,
+            TokenMatcher::Optional(Box::new(TokenMatcher::Exact(",".into()))),
+            0.8,
+            true,
+        );
 
         // 2. Command entry points
-        self.add_edge(ParseState::ExpectingCommand, ParseState::TurnCommand,
-                     TokenMatcher::OneOf(vec!["turn".into(), "fly".into()]), 0.95, true);
-        
-        self.add_edge(ParseState::ExpectingCommand, ParseState::ClimbCommand,
-                     TokenMatcher::Exact("climb".into()), 0.95, true);
-        
-        self.add_edge(ParseState::ExpectingCommand, ParseState::DescendCommand,
-                     TokenMatcher::Exact("descend".into()), 0.95, true);
-        
-        self.add_edge(ParseState::ExpectingCommand, ParseState::ContactCommand,
-                     TokenMatcher::Exact("contact".into()), 0.95, true);
+        self.add_edge(
+            ParseState::ExpectingCommand,
+            ParseState::TurnCommand,
+            TokenMatcher::OneOf(vec!["turn".into(), "fly".into()]),
+            0.95,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingCommand,
+            ParseState::ClimbCommand,
+            TokenMatcher::Exact("climb".into()),
+            0.95,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingCommand,
+            ParseState::DescendCommand,
+            TokenMatcher::Exact("descend".into()),
+            0.95,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingCommand,
+            ParseState::ContactCommand,
+            TokenMatcher::Exact("contact".into()),
+            0.95,
+            true,
+        );
 
         // 3. Turn command flow
-        self.add_edge(ParseState::TurnCommand, ParseState::ExpectingDirection,
-                     TokenMatcher::OneOf(vec!["left".into(), "right".into()]), 0.9, true);
-        
+        self.add_edge(
+            ParseState::TurnCommand,
+            ParseState::ExpectingDirection,
+            TokenMatcher::OneOf(vec!["left".into(), "right".into()]),
+            0.9,
+            true,
+        );
+
         // "fly heading" or "turn left heading"
-        self.add_edge(ParseState::TurnCommand, ParseState::ExpectingHeading,
-                     TokenMatcher::Fuzzy("heading".into(), 0.8), 0.9, true);
-        
-        self.add_edge(ParseState::ExpectingDirection, ParseState::ExpectingHeading,
-                     TokenMatcher::Fuzzy("heading".into(), 0.8), 0.85, true);
-        
+        self.add_edge(
+            ParseState::TurnCommand,
+            ParseState::ExpectingHeading,
+            TokenMatcher::Fuzzy("heading".into(), 0.8),
+            0.9,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingDirection,
+            ParseState::ExpectingHeading,
+            TokenMatcher::Fuzzy("heading".into(), 0.8),
+            0.85,
+            true,
+        );
+
         // Simple turn without heading
-        self.add_edge(ParseState::ExpectingDirection, ParseState::CommandComplete,
-                     TokenMatcher::Optional(Box::new(TokenMatcher::Exact("turn".into()))), 0.7, false);
-        
-        self.add_edge(ParseState::ExpectingHeading, ParseState::CommandComplete,
-                     TokenMatcher::Number(NumberType::Heading), 0.9, true);
+        self.add_edge(
+            ParseState::ExpectingDirection,
+            ParseState::CommandComplete,
+            TokenMatcher::Optional(Box::new(TokenMatcher::Exact("turn".into()))),
+            0.7,
+            false,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingHeading,
+            ParseState::CommandComplete,
+            TokenMatcher::Number(NumberType::Heading),
+            0.9,
+            true,
+        );
 
         // 4. Altitude commands
-        self.add_edge(ParseState::ClimbCommand, ParseState::ExpectingAltitude,
-                     TokenMatcher::OneOf(vec!["to".into(), "and".into(), "maintain".into()]), 0.7, true);
-        
-        self.add_edge(ParseState::DescendCommand, ParseState::ExpectingAltitude,
-                     TokenMatcher::OneOf(vec!["to".into(), "and".into(), "maintain".into()]), 0.7, true);
-        
-        self.add_edge(ParseState::ClimbCommand, ParseState::ExpectingAltitude,
-                     TokenMatcher::Fuzzy("flight".into(), 0.8), 0.8, true);
-        
-        self.add_edge(ParseState::DescendCommand, ParseState::ExpectingAltitude,
-                     TokenMatcher::Fuzzy("flight".into(), 0.8), 0.8, true);
-        
-        self.add_edge(ParseState::ExpectingAltitude, ParseState::CommandComplete,
-                     TokenMatcher::OneOf(vec!["level".into(), "feet".into()]), 0.7, true);
-        
-        self.add_edge(ParseState::ExpectingAltitude, ParseState::CommandComplete,
-                     TokenMatcher::Number(NumberType::Altitude), 0.9, true);
+        self.add_edge(
+            ParseState::ClimbCommand,
+            ParseState::ExpectingAltitude,
+            TokenMatcher::OneOf(vec!["to".into(), "and".into(), "maintain".into()]),
+            0.7,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::DescendCommand,
+            ParseState::ExpectingAltitude,
+            TokenMatcher::OneOf(vec!["to".into(), "and".into(), "maintain".into()]),
+            0.7,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ClimbCommand,
+            ParseState::ExpectingAltitude,
+            TokenMatcher::Fuzzy("flight".into(), 0.8),
+            0.8,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::DescendCommand,
+            ParseState::ExpectingAltitude,
+            TokenMatcher::Fuzzy("flight".into(), 0.8),
+            0.8,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingAltitude,
+            ParseState::CommandComplete,
+            TokenMatcher::OneOf(vec!["level".into(), "feet".into()]),
+            0.7,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingAltitude,
+            ParseState::CommandComplete,
+            TokenMatcher::Number(NumberType::Altitude),
+            0.9,
+            true,
+        );
 
         // 5. Contact commands
-        self.add_edge(ParseState::ContactCommand, ParseState::ExpectingStation,
-                     TokenMatcher::OneOf(vec!["tower".into(), "ground".into(), "approach".into()]), 0.9, true);
-        
-        self.add_edge(ParseState::ExpectingStation, ParseState::ExpectingFrequency,
-                     TokenMatcher::Number(NumberType::Frequency), 0.9, true);
-        
-        self.add_edge(ParseState::ExpectingFrequency, ParseState::CommandComplete,
-                     TokenMatcher::Pattern(r"\d+\.\d+".into()), 0.85, true);
+        self.add_edge(
+            ParseState::ContactCommand,
+            ParseState::ExpectingStation,
+            TokenMatcher::OneOf(vec!["tower".into(), "ground".into(), "approach".into()]),
+            0.9,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingStation,
+            ParseState::ExpectingFrequency,
+            TokenMatcher::Number(NumberType::Frequency),
+            0.9,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::ExpectingFrequency,
+            ParseState::CommandComplete,
+            TokenMatcher::Pattern(r"\d+\.\d+".into()),
+            0.85,
+            true,
+        );
 
         // 6. Command completion -> next command or end
-        self.add_edge(ParseState::CommandComplete, ParseState::ExpectingCommand,
-                     TokenMatcher::OneOf(vec!["and".into(), "then".into(), ",".into()]), 0.5, true);
-        
-        self.add_edge(ParseState::CommandComplete, ParseState::ParseComplete,
-                     TokenMatcher::Optional(Box::new(TokenMatcher::Pattern(".*".into()))), 0.8, false);
+        self.add_edge(
+            ParseState::CommandComplete,
+            ParseState::ExpectingCommand,
+            TokenMatcher::OneOf(vec!["and".into(), "then".into(), ",".into()]),
+            0.5,
+            true,
+        );
+
+        self.add_edge(
+            ParseState::CommandComplete,
+            ParseState::ParseComplete,
+            TokenMatcher::Optional(Box::new(TokenMatcher::Pattern(".*".into()))),
+            0.8,
+            false,
+        );
     }
 
-    fn add_edge(&mut self, from: ParseState, to: ParseState, matcher: TokenMatcher, confidence: f32, consumes: bool) {
+    fn add_edge(
+        &mut self,
+        from: ParseState,
+        to: ParseState,
+        matcher: TokenMatcher,
+        confidence: f32,
+        consumes: bool,
+    ) {
         self.edges.push(ParseEdge {
-            from, to, matcher, confidence, consumes_token: consumes
+            from,
+            to,
+            matcher,
+            confidence,
+            consumes_token: consumes,
         });
+    }
+
+    /// Parse a transmission using the graph-based parser
+    pub fn parse(&self, text: &str) -> ParseResult {
+        self.parse_transmission_enhanced(text)
     }
 
     pub fn parse_transmission_enhanced(&self, text: &str) -> ParseResult {
         // Preprocess text for Whisper quirks
         let preprocessed = self.preprocess_whisper_text(text);
         let tokens = self.tokenize(&preprocessed);
-        
+
         let mut best_paths = Vec::new();
-        
+
         // Start exploration from initial state
-        self.explore_paths(ParseState::Start, 0, &tokens, 1.0, Vec::new(), HashMap::new(), &mut best_paths);
-        
+        self.explore_paths(
+            ParseState::Start,
+            0,
+            &tokens,
+            1.0,
+            Vec::new(),
+            HashMap::new(),
+            &mut best_paths,
+        );
+
         // Find best complete path
-        if let Some(best_path) = best_paths.into_iter()
-            .filter(|path| path.final_state == ParseState::ParseComplete || path.final_state == ParseState::CommandComplete)
-            .max_by(|a, b| a.total_confidence.partial_cmp(&b.total_confidence).unwrap()) 
+        if let Some(best_path) = best_paths
+            .into_iter()
+            .filter(|path| {
+                path.final_state == ParseState::ParseComplete
+                    || path.final_state == ParseState::CommandComplete
+            })
+            .max_by(|a, b| a.total_confidence.partial_cmp(&b.total_confidence).unwrap())
         {
             self.path_to_result(best_path, &tokens)
         } else {
@@ -325,32 +437,14 @@ impl GraphParser {
     }
 
     fn preprocess_whisper_text(&self, text: &str) -> String {
-        let mut result = text.to_lowercase();
-        
-        // Whisper-specific normalization
-        result = result
-            .replace("flyheading", "fly heading")
-            .replace("turnleft", "turn left")
-            .replace("turnright", "turn right")
-            .replace("climbto", "climb to")
-            .replace("descendto", "descend to")
-            .replace("contacttower", "contact tower")
-            .replace("flightlevel", "flight level")
-            .replace("maintainflightlevel", "maintain flight level")
-            .replace(".", "")
-            .replace(",", " , ")
-            .replace("!", "")
-            .replace("?", "");
-        
-        // Convert spoken numbers to digits
-        for (word, digit) in &self.number_words {
-            let pattern = format!(r"\b{}\b", regex::escape(word));
-            if let Ok(regex) = regex::Regex::new(&pattern) {
-                result = regex.replace_all(&result, digit.to_string()).to_string();
-            }
-        }
-        
-        result
+        let result = text.to_lowercase();
+
+        // Apply recognition corrections from config
+        self.recognition_corrections
+            .iter()
+            .fold(result, |acc, (incorrect, correct)| {
+                acc.replace(incorrect, correct)
+            })
     }
 
     fn tokenize(&self, text: &str) -> Vec<String> {
@@ -388,7 +482,7 @@ impl GraphParser {
         }
 
         let current_token = &tokens[token_index];
-        
+
         // Find all possible transitions from current state
         for edge in &self.edges {
             if edge.from != current_state {
@@ -396,9 +490,11 @@ impl GraphParser {
             }
 
             // Test if this edge matches the current token
-            if let Some((match_confidence, extracted_value)) = self.test_matcher(&edge.matcher, current_token, token_index, tokens) {
+            if let Some((match_confidence, extracted_value)) =
+                self.test_matcher(&edge.matcher, current_token, token_index, tokens)
+            {
                 let new_confidence = current_confidence * edge.confidence * match_confidence;
-                
+
                 // Only pursue promising paths (confidence threshold)
                 if new_confidence > 0.1 {
                     let mut new_path = current_path.clone();
@@ -415,10 +511,10 @@ impl GraphParser {
                         new_data.insert(key, value);
                     }
 
-                    let next_token_index = if edge.consumes_token { 
-                        token_index + 1 
-                    } else { 
-                        token_index 
+                    let next_token_index = if edge.consumes_token {
+                        token_index + 1
+                    } else {
+                        token_index
                     };
 
                     // Recursive exploration
@@ -436,7 +532,13 @@ impl GraphParser {
         }
     }
 
-    fn test_matcher(&self, matcher: &TokenMatcher, token: &str, _index: usize, _tokens: &[String]) -> Option<(f32, Option<ParsedValue>)> {
+    fn test_matcher(
+        &self,
+        matcher: &TokenMatcher,
+        token: &str,
+        _index: usize,
+        _tokens: &[String],
+    ) -> Option<(f32, Option<ParsedValue>)> {
         match matcher {
             TokenMatcher::Exact(expected) => {
                 if token.to_lowercase() == expected.to_lowercase() {
@@ -452,7 +554,9 @@ impl GraphParser {
                         let value = match opt.as_str() {
                             "left" => Some(ParsedValue::Direction(TurnDirection::Left)),
                             "right" => Some(ParsedValue::Direction(TurnDirection::Right)),
-                            "tower" | "ground" | "approach" => Some(ParsedValue::Station(opt.clone())),
+                            "tower" | "ground" | "approach" => {
+                                Some(ParsedValue::Station(opt.clone()))
+                            }
                             _ => None,
                         };
                         return Some((0.95, value));
@@ -468,9 +572,7 @@ impl GraphParser {
                     None
                 }
             }
-            TokenMatcher::Number(number_type) => {
-                self.test_number_match(token, number_type)
-            }
+            TokenMatcher::Number(number_type) => self.test_number_match(token, number_type),
             TokenMatcher::Airline => {
                 if self.is_airline_match(token) {
                     let normalized = self.normalize_airline_token(token);
@@ -497,7 +599,11 @@ impl GraphParser {
         }
     }
 
-    fn test_number_match(&self, token: &str, number_type: &NumberType) -> Option<(f32, Option<ParsedValue>)> {
+    fn test_number_match(
+        &self,
+        token: &str,
+        number_type: &NumberType,
+    ) -> Option<(f32, Option<ParsedValue>)> {
         match number_type {
             NumberType::Heading => {
                 if let Ok(heading) = token.parse::<f32>() {
@@ -522,7 +628,7 @@ impl GraphParser {
                 }
             }
             NumberType::Frequency => {
-                // Check for frequency format like "121.5" or "121" 
+                // Check for frequency format like "121.5" or "121"
                 if let Ok(num) = token.parse::<u32>() {
                     if (118..=137).contains(&num) {
                         Some((0.8, Some(ParsedValue::Frequency(num, 0))))
@@ -532,7 +638,9 @@ impl GraphParser {
                 } else if token.contains('.') {
                     let parts: Vec<&str> = token.split('.').collect();
                     if parts.len() == 2 {
-                        if let (Ok(num), Ok(dec)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                        if let (Ok(num), Ok(dec)) =
+                            (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                        {
                             if (118..=137).contains(&num) && dec <= 999 {
                                 Some((0.9, Some(ParsedValue::Frequency(num, dec))))
                             } else {
@@ -549,7 +657,10 @@ impl GraphParser {
                 }
             }
             NumberType::FlightNumber => {
-                if token.chars().all(|c| c.is_ascii_digit() || c.is_ascii_alphabetic()) {
+                if token
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c.is_ascii_alphabetic())
+                {
                     Some((0.8, None))
                 } else {
                     None
@@ -562,10 +673,10 @@ impl GraphParser {
         // Simple similarity based on common characters
         let a_chars: std::collections::HashSet<char> = a.chars().collect();
         let b_chars: std::collections::HashSet<char> = b.chars().collect();
-        
+
         let intersection = a_chars.intersection(&b_chars).count();
         let union = a_chars.union(&b_chars).count();
-        
+
         if union == 0 {
             if a == b { 1.0 } else { 0.0 }
         } else {
@@ -575,7 +686,7 @@ impl GraphParser {
 
     fn is_airline_match(&self, token: &str) -> bool {
         let token_lower = token.to_lowercase();
-        
+
         // Check against known callsigns and airline names
         self.callsign_to_icao.contains_key(&token_lower) ||
         self.airline_name_to_icao.contains_key(&token_lower) ||
@@ -585,29 +696,30 @@ impl GraphParser {
 
     fn normalize_airline_token(&self, token: &str) -> String {
         let token_lower = token.to_lowercase();
-        
+
         // Try direct callsign match
         if let Some(icao) = self.callsign_to_icao.get(&token_lower) {
             return icao.to_uppercase();
         }
-        
+
         // Try airline name match
         if let Some(icao) = self.airline_name_to_icao.get(&token_lower) {
             return icao.to_uppercase();
         }
-        
+
         // Try phonetic alphabet
         if let Some(letter) = self.phonetic_alphabet.get(&token_lower) {
             return letter.clone();
         }
-        
+
         // Fallback: return as-is but uppercase
         token.to_uppercase()
     }
 
     fn path_to_result(&self, path: ParsePath, tokens: &[String]) -> ParseResult {
         // Extract callsign from path data
-        let callsign = path.extracted_data
+        let callsign = path
+            .extracted_data
             .values()
             .find_map(|v| match v {
                 ParsedValue::Callsign(c) => Some(c.clone()),
@@ -617,17 +729,23 @@ impl GraphParser {
 
         // Extract commands from path
         let mut commands = Vec::new();
-        
+
         // Simple command extraction based on final state and collected data
         // This is a simplified version - in a full implementation, you'd track
         // command building through the state transitions
-        
-        if path.steps.iter().any(|step| step.state == ParseState::CommandComplete) {
+
+        if path
+            .steps
+            .iter()
+            .any(|step| step.state == ParseState::CommandComplete)
+        {
             // Build commands from extracted data
-            if let Some(ParsedValue::Heading(heading)) = path.extracted_data.values().find_map(|v| match v {
-                ParsedValue::Heading(h) => Some(ParsedValue::Heading(*h)),
-                _ => None,
-            }) {
+            if let Some(ParsedValue::Heading(heading)) =
+                path.extracted_data.values().find_map(|v| match v {
+                    ParsedValue::Heading(h) => Some(ParsedValue::Heading(*h)),
+                    _ => None,
+                })
+            {
                 commands.push(CommandWithConfidence {
                     command: AviationCommandPart::FlyHeading {
                         heading: HeadingDirection::Heading(Heading::from(heading as f64)),
@@ -637,7 +755,7 @@ impl GraphParser {
                     source_text: tokens[..path.tokens_consumed].join(" "),
                 });
             }
-            
+
             // Add more command extraction logic here...
         }
 
@@ -658,15 +776,81 @@ impl GraphParser {
     }
 }
 
+// Standalone function to load airlines data
+fn load_airlines(airlines: &Airlines) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut callsign_to_icao = HashMap::new();
+    let mut airline_name_to_icao = HashMap::new();
+
+    for airline in &airlines.0 {
+        let Some(icao) = &airline.icao else {
+            continue;
+        };
+        if !airline.active || icao.is_empty() || icao == "N/A" {
+            continue;
+        }
+        let icao_lower = icao.to_lowercase();
+
+        // Primary: Map callsign to ICAO
+        if let Some(callsign) = &airline.callsign {
+            if !callsign.is_empty() {
+                let callsign_key = callsign.to_lowercase().replace(" ", "");
+                callsign_to_icao.insert(callsign_key, icao_lower.clone());
+            }
+        }
+
+        // Fallback: Map airline name to ICAO
+        if !airline.name.is_empty() {
+            let name_key = airline.name.to_lowercase().replace(" ", "");
+            if !callsign_to_icao.contains_key(&name_key) {
+                airline_name_to_icao.insert(name_key, icao_lower.clone());
+            }
+        }
+    }
+
+    (airline_name_to_icao, callsign_to_icao)
+}
+
 // Re-export for compatibility
+pub use CommandWithConfidence as GraphCommandWithConfidence;
 pub use ParseResult as GraphParseResult;
 pub use ParsedCommand as GraphParsedCommand;
-pub use CommandWithConfidence as GraphCommandWithConfidence;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use aviation_helper_rs::clearance::airlines::AirlineEntry;
+
+    fn create_test_config() -> ParserConfig {
+        let mut recognition_corrections = HashMap::new();
+        recognition_corrections.insert("flyheading".to_string(), "fly heading".to_string());
+        recognition_corrections.insert("onetwothree".to_string(), "123".to_string());
+
+        let mut number_words = HashMap::new();
+        number_words.insert("one".to_string(), 1);
+        number_words.insert("two".to_string(), 2);
+        number_words.insert("three".to_string(), 3);
+
+        let mut direction_words = HashMap::new();
+        direction_words.insert("left".to_string(), "left".to_string());
+        direction_words.insert("right".to_string(), "right".to_string());
+
+        let mut altitude_words = HashMap::new();
+        altitude_words.insert("climb".to_string(), "climb".to_string());
+        altitude_words.insert("descend".to_string(), "descend".to_string());
+
+        let mut phonetic_alphabet = HashMap::new();
+        phonetic_alphabet.insert("delta".to_string(), "D".to_string());
+
+        ParserConfig {
+            recognition_corrections,
+            number_words,
+            direction_words,
+            altitude_words,
+            phonetic_alphabet,
+            fuzzy_threshold: 0.8,
+            confidence_threshold: 0.1,
+        }
+    }
 
     fn create_test_airlines() -> Airlines {
         Airlines(vec![
@@ -695,11 +879,12 @@ mod tests {
 
     #[test]
     fn test_graph_parser_basic() {
+        let config = create_test_config();
         let airlines = create_test_airlines();
-        let parser = GraphParser::new(airlines);
-        
+        let parser = GraphParser::new(config, &airlines);
+
         let result = parser.parse_transmission_enhanced("delta 123 turn left heading 270");
-        
+
         match result {
             ParseResult::Success(parsed) => {
                 assert!(!parsed.callsign.is_empty());
@@ -713,21 +898,23 @@ mod tests {
 
     #[test]
     fn test_whisper_preprocessing() {
+        let config = create_test_config();
         let airlines = create_test_airlines();
-        let parser = GraphParser::new(airlines);
-        
+        let parser = GraphParser::new(config, &airlines);
+
         let preprocessed = parser.preprocess_whisper_text("deltaonetwothreeflyheading270");
         assert_eq!(preprocessed, "delta123fly heading270");
     }
 
     #[test]
     fn test_fuzzy_matching() {
+        let config = create_test_config();
         let airlines = create_test_airlines();
-        let parser = GraphParser::new(airlines);
-        
+        let parser = GraphParser::new(config, &airlines);
+
         // Test that "hedding" matches "heading" with fuzzy matching
         let result = parser.parse_transmission_enhanced("delta 123 fly hedding 090");
-        
+
         match result {
             ParseResult::Success(_) | ParseResult::PartialSuccess { .. } => {
                 // Good - fuzzy matching worked

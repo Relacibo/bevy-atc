@@ -1,0 +1,98 @@
+(
+    recognition_corrections: {
+        // Whisper-specific corrections for common speech-to-text errors
+        "flyheading": "fly heading",
+        "flightlevel": "flight level",
+        
+        // Common phonetic misspellings - correct to standard forms
+        "hedding": "heading",
+        "alth": "altitude",
+        "altitide": "altitude",
+        "groung": "ground",
+        "aproach": "approach",
+        
+        // Aviation phonetic corrections to standard numbers
+        "fife": "five",
+        "tree": "three",
+        "niner": "nine",
+        
+        // Remove punctuation that interferes with parsing
+        ".": "",
+        ",": " ",
+        "!": "",
+        "?": "",
+    },
+    
+    number_words: {
+        // Standard spoken numbers to digits
+        "zero": 0,
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        
+        // Digit forms
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5,
+        "6": 6,
+        "7": 7,
+        "8": 8,
+        "9": 9,
+    },
+    
+    direction_words: {
+        // Turn directions (lowercase because Whisper output is lowercase)
+        "left": "left",
+        "right": "right",
+    },
+    
+    altitude_words: {
+        // Altitude directions (lowercase because Whisper output is lowercase)
+        "climb": "climb",
+        "descend": "descend",
+        "descent": "descend",
+    },
+    
+    phonetic_alphabet: {
+        // NATO phonetic alphabet (lowercase because Whisper output is lowercase)
+        "alpha": "A",
+        "bravo": "B",
+        "charlie": "C",
+        "delta": "D",
+        "echo": "E",
+        "foxtrot": "F",
+        "golf": "G",
+        "hotel": "H",
+        "india": "I",
+        "juliet": "J",
+        "kilo": "K",
+        "lima": "L",
+        "mike": "M",
+        "november": "N",
+        "oscar": "O",
+        "papa": "P",
+        "quebec": "Q",
+        "romeo": "R",
+        "sierra": "S",
+        "tango": "T",
+        "uniform": "U",
+        "victor": "V",
+        "whiskey": "W",
+        "xray": "X",
+        "yankee": "Y",
+        "zulu": "Z",
+    },
+    
+    // Parser behavior thresholds
+    fuzzy_threshold: 0.8,         // How similar words need to be for fuzzy matching
+    confidence_threshold: 0.1,    // Minimum confidence to pursue a parse path
+)
