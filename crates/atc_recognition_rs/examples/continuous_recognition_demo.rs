@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use atc_recognition_rs::{Error, SpeechToTextConfig, SpeechToText, VoiceRecognizer};
+use atc_recognition_rs::{Error, SpeechToText, SpeechToTextConfig};
 use aviation_helper_rs::{
     clearance::{airlines::Airlines, aviation_command::AviationCommandPart},
     types::altitude::Altitude,

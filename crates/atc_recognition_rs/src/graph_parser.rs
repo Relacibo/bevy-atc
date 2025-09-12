@@ -6,13 +6,13 @@
 
 use aviation_helper_rs::{
     clearance::airlines::Airlines,
-    clearance::aviation_command::{AviationCommandPart, Frequency, HeadingDirection},
+    clearance::aviation_command::{AviationCommandPart, HeadingDirection},
     types::{
-        altitude::{Altitude, VerticalDirection},
-        heading::{Degrees, Heading, TurnDirection},
+        altitude::VerticalDirection,
+        heading::{Heading, TurnDirection},
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]

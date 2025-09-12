@@ -3,7 +3,10 @@
 use std::{env, sync::LazyLock};
 
 use bevy::{
-    app::{App, AppExit}, dev_tools::states::log_transitions, prelude::*, window::WindowPlugin, DefaultPlugins
+    DefaultPlugins,
+    app::{App, AppExit},
+    prelude::*,
+    window::WindowPlugin,
 };
 
 use bevy_prng::WyRand;
@@ -17,7 +20,6 @@ use menu::MenuPlugin;
 
 mod dev_gui;
 mod game;
-// mod level_select_menu;
 mod menu;
 mod util;
 
@@ -43,7 +45,6 @@ impl AppConfig {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, States)]
 pub enum AppState {
     Menu,
-    LevelSelect,
     Game,
 }
 
